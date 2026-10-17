@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/aangan-types",
+    "crates/hwprobe",
+    "crates/fitcalc",
+    "crates/aangan-cli",
+    # M2: add "apps/desktop/src-tauri"
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/panthak4tech/aangan"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+aangan-types = { path = "crates/aangan-types" }
+hwprobe = { path = "crates/hwprobe" }
+fitcalc = { path = "crates/fitcalc" }
