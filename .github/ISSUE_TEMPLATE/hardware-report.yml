@@ -1,0 +1,22 @@
+name: Hardware report
+description: Share your PC's scan so we can tune the estimates
+title: "[hardware] "
+labels: ["hardware-report"]
+body:
+  - type: textarea
+    id: scan
+    attributes:
+      label: Output of `aangan scan --json`
+      render: json
+    validations:
+      required: true
+  - type: input
+    id: pc
+    attributes:
+      label: PC model (optional)
+      description: e.g. Lenovo IdeaPad 5, custom desktop
+  - type: textarea
+    id: observed
+    attributes:
+      label: Real-world speed (optional)
+      description: If you ran a model in another app (LM Studio, Ollama), which model/quant and what tokens/s?
