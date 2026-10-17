@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "os": { "name": "Windows", "version": "Windows 11 (26100)", "arch": "x86_64" },
+  "cpu": { "brand": "AMD Ryzen 7 7840U", "physical_cores": 8, "logical_cores": 16, "features": ["avx2", "fma"] },
+  "memory": { "total_bytes": 17179869184, "available_bytes": 12000000000, "read_bandwidth_gbps": 48.0, "bandwidth_source": "measured" },
+  "gpus": [
+    {
+      "name": "AMD Radeon 780M",
+      "vendor": "amd",
+      "dedicated_vram_bytes": 536870912,
+      "shared_memory_bytes": 8589934592,
+      "is_integrated": true,
+      "bandwidth_gbps": null,
+      "bandwidth_source": "unknown"
+    }
+  ],
+  "disks": [{ "mount": "C:\\", "total_bytes": 1000000000000, "available_bytes": 600000000000 }]
+}

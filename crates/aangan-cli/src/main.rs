@@ -153,8 +153,8 @@ fn fit_label(fit: Fit) -> &'static str {
 fn print_recommendations(recommendations: &[Recommendation], context: u32) {
     println!("\nModels for a {context}-token context (speeds are ESTIMATES)\n");
     println!(
-        "{:<3} {:<26} {:<8} {:<10} {:>8} {:>9}  {}",
-        "#", "Model", "Quant", "Fit", "~tok/s", "Memory", "Runs on"
+        "{:<3} {:<26} {:<8} {:<10} {:>8} {:>9}  Runs on",
+        "#", "Model", "Quant", "Fit", "~tok/s", "Memory"
     );
     for recommendation in recommendations {
         let estimate = &recommendation.estimate;

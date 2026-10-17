@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "os": { "name": "Windows", "version": "Windows 11 (26100)", "arch": "x86_64" },
+  "cpu": { "brand": "AMD Ryzen 5 5600", "physical_cores": 6, "logical_cores": 12, "features": ["avx2", "fma"] },
+  "memory": { "total_bytes": 34359738368, "available_bytes": 24000000000, "read_bandwidth_gbps": 42.0, "bandwidth_source": "measured" },
+  "gpus": [
+    {
+      "name": "NVIDIA GeForce RTX 3060",
+      "vendor": "nvidia",
+      "dedicated_vram_bytes": 12884901888,
+      "shared_memory_bytes": 17179869184,
+      "is_integrated": false,
+      "bandwidth_gbps": 360.0,
+      "bandwidth_source": "nvml-estimate"
+    }
+  ],
+  "disks": [{ "mount": "C:\\", "total_bytes": 512000000000, "available_bytes": 200000000000 }]
+}

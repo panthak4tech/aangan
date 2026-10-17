@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "os": { "name": "Windows", "version": "Windows 10 (19045)", "arch": "x86_64" },
+  "cpu": { "brand": "Intel Core i5-8250U", "physical_cores": 4, "logical_cores": 8, "features": ["avx2", "fma"] },
+  "memory": { "total_bytes": 8000000000, "available_bytes": 4500000000, "read_bandwidth_gbps": 20.0, "bandwidth_source": "measured" },
+  "gpus": [],
+  "disks": [{ "mount": "C:\\", "total_bytes": 256000000000, "available_bytes": 80000000000 }]
+}

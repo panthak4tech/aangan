@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "os": { "name": "Windows", "version": "Windows 11 (26100)", "arch": "x86_64" },
+  "cpu": { "brand": "AMD Ryzen 9 7950X", "physical_cores": 16, "logical_cores": 32, "features": ["avx2", "fma"] },
+  "memory": { "total_bytes": 68719476736, "available_bytes": 50000000000, "read_bandwidth_gbps": 75.0, "bandwidth_source": "measured" },
+  "gpus": [
+    {
+      "name": "NVIDIA GeForce RTX 4090",
+      "vendor": "nvidia",
+      "dedicated_vram_bytes": 25769803776,
+      "shared_memory_bytes": 34359738368,
+      "is_integrated": false,
+      "bandwidth_gbps": 1008.0,
+      "bandwidth_source": "nvml-estimate"
+    }
+  ],
+  "disks": [{ "mount": "C:\\", "total_bytes": 2000000000000, "available_bytes": 1500000000000 }]
+}
