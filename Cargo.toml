@@ -5,7 +5,7 @@ members = [
     "crates/hwprobe",
     "crates/fitcalc",
     "crates/aangan-cli",
-    # M2: add "apps/desktop/src-tauri"
+    "apps/desktop/src-tauri",
 ]
 
 [workspace.package]
@@ -20,3 +20,10 @@ serde_json = "1"
 aangan-types = { path = "crates/aangan-types" }
 hwprobe = { path = "crates/hwprobe" }
 fitcalc = { path = "crates/fitcalc" }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
