@@ -111,6 +111,7 @@ mod tests {
         );
     }
 
+    /// Verifies snake_case report fields and hardware values survive JSON serialization.
     #[test]
     fn hardware_report_round_trips_with_snake_case_fields() {
         let profile = HardwareProfile {

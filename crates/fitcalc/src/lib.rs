@@ -92,6 +92,7 @@ mod tests {
         );
     }
 
+    /// Checks CPU bandwidth fit thresholds and rejection when system memory is insufficient.
     #[test]
     fn estimate_classifies_cpu_speed_thresholds_and_memory_failure() {
         let mut hardware = profile();
@@ -117,6 +118,7 @@ mod tests {
         assert!(result.reasons[0].contains("Try a smaller model"));
     }
 
+    /// Verifies partial GPU offloading retains a positive decode rate and explains the split.
     #[test]
     fn estimate_partially_offloads_when_gpu_memory_cannot_hold_all_layers() {
         let mut hardware = profile();

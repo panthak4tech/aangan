@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { estimateModel, kvCacheBytes, rankModels } from "@/api/estimate";
 import { MODELS, PRESETS } from "@/api/presets";
 
+/** Returns the first model fixture whose ID contains `id`, or throws if none matches. */
 function getModel(id: string) {
   const model = MODELS.find((item) => item.id.includes(id));
   if (!model) throw new Error(`missing model fixture: ${id}`);
