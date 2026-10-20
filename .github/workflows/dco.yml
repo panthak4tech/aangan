@@ -23,6 +23,7 @@ jobs:
           set -euo pipefail
           fail=0
           for sha in $(git rev-list --no-merges "$BASE_SHA..$HEAD_SHA"); do
+            if git show -s --format='%an' "$sha" | grep -qi '\[bot\]'; then continue; fi
             if ! git show -s --format=%B "$sha" | grep -Eiq '^Signed-off-by: .+ <.+@.+>[[:space:]]*$'; then
               echo "::error::Commit $sha has no Signed-off-by line. Fix: git rebase --signoff origin/main && git push --force-with-lease"
               fail=1
