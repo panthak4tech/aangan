@@ -105,4 +105,5 @@ it("marks the largest good-fitting model separately from the fastest model", () 
 
   expect(bestFit?.model.id).toContain("1.5b");
   expect(fastest?.model.id).toContain("0.5b");
+  expect(recommendations[0]?.model.id).toContain("0.5b");
 });
