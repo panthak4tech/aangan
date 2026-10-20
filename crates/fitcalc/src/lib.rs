@@ -14,7 +14,9 @@ mod tests {
         builtin_catalog, estimate, kv_cache_bytes, recommend, Confidence, Fit, License, ModelSpec,
         Placement, Tunables,
     };
-    use aangan_types::{CpuInfo, HardwareProfile, MemoryInfo, OsInfo, SCHEMA_VERSION};
+    use aangan_types::{
+        CpuInfo, GpuInfo, GpuVendor, HardwareProfile, MemoryInfo, OsInfo, SCHEMA_VERSION,
+    };
 
     fn model() -> ModelSpec {
         ModelSpec {
@@ -88,6 +90,56 @@ mod tests {
             result.memory_required_bytes,
             result.weights_bytes + result.kv_cache_bytes + result.overhead_bytes
         );
+    }
+
+    #[test]
+    fn estimate_classifies_cpu_speed_thresholds_and_memory_failure() {
+        let mut hardware = profile();
+        for (bandwidth, expected) in [
+            (25.0, Fit::Great),
+            (12.0, Fit::Good),
+            (8.0, Fit::Slow),
+            (4.0, Fit::TooSlow),
+        ] {
+            let tunables = Tunables {
+                assumed_cpu_bandwidth_gbps: bandwidth,
+                ..Tunables::default()
+            };
+            let result = estimate(&hardware, &model(), 512, &tunables);
+            assert_eq!(result.placement, Placement::CpuOnly);
+            assert_eq!(result.fit, expected);
+        }
+
+        hardware.memory.total_bytes = 1_000_000_000;
+        let result = estimate(&hardware, &model(), 512, &Tunables::default());
+        assert_eq!(result.placement, Placement::NoFit);
+        assert_eq!(result.fit, Fit::WontFit);
+        assert!(result.reasons[0].contains("Try a smaller model"));
+    }
+
+    #[test]
+    fn estimate_partially_offloads_when_gpu_memory_cannot_hold_all_layers() {
+        let mut hardware = profile();
+        hardware.gpus.push(GpuInfo {
+            name: "Fixture GPU".into(),
+            vendor: GpuVendor::Nvidia,
+            dedicated_vram_bytes: 1_200_000_000,
+            shared_memory_bytes: 0,
+            is_integrated: false,
+            bandwidth_gbps: Some(100.0),
+            bandwidth_source: "fixture".into(),
+        });
+
+        let result = estimate(&hardware, &model(), 512, &Tunables::default());
+        assert!(matches!(
+            result.placement,
+            Placement::PartialGpu {
+                gpu_layers,
+                total_layers: 24
+            } if gpu_layers > 0 && gpu_layers < 24
+        ));
+        assert!(result.decode_tps > 0.0);
+        assert!(result.reasons[0].contains("Too big for GPU memory alone"));
     }
 
     #[test]

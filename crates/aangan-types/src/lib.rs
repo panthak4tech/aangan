@@ -81,7 +81,9 @@ pub struct DiskInfo {
 
 #[cfg(test)]
 mod tests {
-    use super::GpuVendor;
+    use super::{
+        CpuInfo, DiskInfo, GpuInfo, GpuVendor, HardwareProfile, MemoryInfo, OsInfo, SCHEMA_VERSION,
+    };
 
     #[test]
     fn maps_pci_vendor_ids() {
@@ -107,5 +109,54 @@ mod tests {
             serde_json::to_string(&GpuVendor::Other).unwrap(),
             "\"other\""
         );
+    }
+
+    #[test]
+    fn hardware_report_round_trips_with_snake_case_fields() {
+        let profile = HardwareProfile {
+            schema_version: SCHEMA_VERSION,
+            os: OsInfo {
+                name: "Test OS".into(),
+                version: "1".into(),
+                arch: "x86_64".into(),
+            },
+            cpu: CpuInfo {
+                brand: "Test CPU".into(),
+                physical_cores: 4,
+                logical_cores: 8,
+                features: vec!["avx2".into()],
+            },
+            memory: MemoryInfo {
+                total_bytes: 16_000_000_000,
+                available_bytes: 8_000_000_000,
+                read_bandwidth_gbps: Some(42.5),
+                bandwidth_source: "measured".into(),
+            },
+            gpus: vec![GpuInfo {
+                name: "Fixture GPU".into(),
+                vendor: GpuVendor::Nvidia,
+                dedicated_vram_bytes: 12_000_000_000,
+                shared_memory_bytes: 0,
+                is_integrated: false,
+                bandwidth_gbps: None,
+                bandwidth_source: "unknown".into(),
+            }],
+            disks: vec![DiskInfo {
+                mount: "C:\\".into(),
+                total_bytes: 512_000_000_000,
+                available_bytes: 256_000_000_000,
+            }],
+        };
+
+        let json = serde_json::to_string(&profile).expect("profile serializes");
+        assert!(json.contains("\"schema_version\""));
+        assert!(json.contains("\"total_bytes\""));
+        assert!(json.contains("\"dedicated_vram_bytes\""));
+        assert!(!json.contains("\"schemaVersion\""));
+        let decoded: HardwareProfile = serde_json::from_str(&json).expect("report deserializes");
+        assert_eq!(decoded.schema_version, SCHEMA_VERSION);
+        assert_eq!(decoded.cpu.features, vec!["avx2"]);
+        assert_eq!(decoded.gpus[0].vendor, GpuVendor::Nvidia);
+        assert_eq!(decoded.disks[0].mount, "C:\\");
     }
 }

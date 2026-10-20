@@ -18,7 +18,7 @@ env:
   DESKTOP_CRATE: aangan-desktop
   RUST_MIN_LINES: "70"
   RUST_CORE_MIN_LINES: "90"
-  COV_IGNORE: '(main\.rs|[\\/]tests[\\/]|hwprobe[\\/]src[\\/]win)'
+  COV_IGNORE: 'aangan-cli[\\/]src[\\/]main\.rs'
 
 jobs:
   rust:
