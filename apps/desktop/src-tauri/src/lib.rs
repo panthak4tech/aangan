@@ -1,7 +1,6 @@
 use aangan_types::HardwareProfile;
 use fitcalc::{Recommendation, Tunables, builtin_catalog, recommend};
 use hwprobe::{ProbeOptions, probe};
-#[cfg(windows)]
 use tauri::Manager;
 
 #[tauri::command]
