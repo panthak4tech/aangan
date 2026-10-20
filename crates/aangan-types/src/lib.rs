@@ -64,7 +64,7 @@ pub struct GpuInfo {
     pub vendor: GpuVendor,
     pub dedicated_vram_bytes: u64,
     pub shared_memory_bytes: u64,
-    /// Heuristic: integrated GPUs share system RAM.
+    /// True for integrated GPUs with a recognized PCI device ID; unknown IDs are treated as discrete.
     pub is_integrated: bool,
     /// Memory bandwidth in GB/s if known (NVIDIA via NVML estimate).
     pub bandwidth_gbps: Option<f64>,

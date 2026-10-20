@@ -47,11 +47,11 @@ beforeEach(() => {
   vi.mocked(revealItemInDir).mockResolvedValue();
 });
 
-function renderScanView() {
+function renderScanView(profile = PRESETS.laptop8_cpu) {
   return render(
     <ToastProvider>
       <ScanView
-        profile={PRESETS.laptop8_cpu}
+        profile={profile}
         scanning={false}
         scanError={false}
         onRescan={vi.fn()}
@@ -216,10 +216,36 @@ describe("ScanView", () => {
     );
 
     expect(screen.getByText(en.views.scan.integratedAlertTitle)).toBeInTheDocument();
+    expect(screen.getByText(en.views.scan.integratedAlert)).toBeInTheDocument();
     expect(screen.getByText(en.views.scan.cpu.avx2)).toBeInTheDocument();
-    expect(screen.getByText(en.views.scan.gpu.sharesMemory)).toBeInTheDocument();
+    expect(screen.getByText(en.views.scan.gpu.integrated)).toBeInTheDocument();
+    expect(screen.getByText(en.views.scan.gpu.notUsedForModels)).toBeInTheDocument();
     expect(screen.getByText(en.views.scan.memory.measured)).toBeInTheDocument();
     expect(screen.getByText(en.views.scan.storage.title)).toBeInTheDocument();
+  });
+
+  it("lists integrated and discrete adapters and suppresses the integrated-only alert", () => {
+    const profile = structuredClone(PRESETS.desktop_3060);
+    profile.gpus.unshift(structuredClone(PRESETS.laptop16_igpu.gpus[0]));
+    renderScanView(profile);
+
+    expect(screen.getByText("Intel Iris Xe Graphics")).toBeInTheDocument();
+    expect(screen.getByText("NVIDIA GeForce RTX 3060")).toBeInTheDocument();
+    expect(screen.getByText(en.views.scan.gpu.vendors.intel)).toBeInTheDocument();
+    expect(screen.getByText(en.views.scan.gpu.vendors.nvidia)).toBeInTheDocument();
+    expect(screen.getByText(en.views.scan.gpu.integrated)).toBeInTheDocument();
+    expect(screen.getByText(en.views.scan.gpu.discrete)).toBeInTheDocument();
+    expect(screen.getByText(en.views.scan.gpu.usedForModels)).toBeInTheDocument();
+    expect(screen.getByText(en.views.scan.gpu.notUsedForModels)).toBeInTheDocument();
+    expect(screen.getByText(en.views.scan.gpu.sharedVram)).toBeInTheDocument();
+    expect(screen.getByText(en.views.scan.gpu.vram)).toBeInTheDocument();
+    expect(screen.queryByText(en.views.scan.integratedAlert)).not.toBeInTheDocument();
+  });
+
+  it("does not show the built-in graphics alert when no adapter is detected", () => {
+    renderScanView(PRESETS.laptop8_cpu);
+
+    expect(screen.queryByText(en.views.scan.integratedAlert)).not.toBeInTheDocument();
   });
 
   it("shows success feedback after copy and saving the report", async () => {

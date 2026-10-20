@@ -67,6 +67,7 @@ export function ScanView({ profile, scanning, scanError, onRescan }: Props) {
 
   const { cpu, memory, gpus, disks } = profile;
   const hasIntegrated = gpus.some((g) => g.is_integrated);
+  const hasDiscrete = gpus.some((g) => !g.is_integrated);
 
   return (
     <section className="flex flex-col gap-6">
@@ -98,7 +99,7 @@ export function ScanView({ profile, scanning, scanError, onRescan }: Props) {
         </Alert>
       )}
 
-      {hasIntegrated && (
+      {hasIntegrated && !hasDiscrete && (
         <Alert variant="info">
           <Info className="h-4 w-4" />
           <AlertTitle>{t.integratedAlertTitle}</AlertTitle>
@@ -141,31 +142,43 @@ export function ScanView({ profile, scanning, scanError, onRescan }: Props) {
         {gpus.length === 0 ? (
           <SystemSpecCard icon={MonitorCog} title={t.gpu.title} subtitle={t.gpu.none} />
         ) : (
-          gpus.map((g) => (
-            <SystemSpecCard
-              key={g.name}
-              icon={MonitorCog}
-              title={t.gpu.title}
-              subtitle={g.name}
-              badges={g.is_integrated ? <Badge variant="outline">{t.gpu.sharesMemory}</Badge> : null}
-            >
-              <SpecRow
-                label={g.is_integrated ? t.gpu.sharedVram : t.gpu.vram}
-                value={formatBytes(g.is_integrated ? g.shared_memory_bytes : g.dedicated_vram_bytes)}
-              />
-              <SpecRow
-                label={t.gpu.bandwidth}
-                value={g.bandwidth_gbps !== null ? t.units.approx(formatGbps(g.bandwidth_gbps)) : null}
-                badge={
-                  g.bandwidth_gbps !== null ? (
-                    <Badge variant="estimate">{t.gpu.estimated}</Badge>
-                  ) : (
-                    <Badge variant="unknown">{t.gpu.unknown}</Badge>
-                  )
-                }
-              />
-            </SystemSpecCard>
-          ))
+          <SystemSpecCard icon={MonitorCog} title={t.gpu.title}>
+            {gpus.map((g, index) => (
+              <div
+                key={`${g.name}-${index}`}
+                className={index === 0 ? undefined : "border-t border-border pt-3"}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <dt className="min-w-0 truncate font-medium text-card-foreground">{g.name}</dt>
+                  <dd className="flex items-center gap-2 text-right">
+                    <span className="text-xs text-muted-foreground">{t.gpu.vendors[g.vendor]}</span>
+                    <Badge variant={g.is_integrated ? "outline" : "secondary"}>
+                      {g.is_integrated ? t.gpu.integrated : t.gpu.discrete}
+                    </Badge>
+                  </dd>
+                </div>
+                <SpecRow
+                  label={g.is_integrated ? t.gpu.sharedVram : t.gpu.vram}
+                  value={formatBytes(g.is_integrated ? g.shared_memory_bytes : g.dedicated_vram_bytes)}
+                />
+                <SpecRow
+                  label={t.gpu.bandwidth}
+                  value={g.bandwidth_gbps !== null ? t.units.approx(formatGbps(g.bandwidth_gbps)) : null}
+                  badge={
+                    g.bandwidth_gbps !== null ? (
+                      <Badge variant="estimate">{t.gpu.estimated}</Badge>
+                    ) : (
+                      <Badge variant="unknown">{t.gpu.unknown}</Badge>
+                    )
+                  }
+                />
+                <SpecRow
+                  label={t.gpu.modelUsage}
+                  value={g.is_integrated ? t.gpu.notUsedForModels : t.gpu.usedForModels}
+                />
+              </div>
+            ))}
+          </SystemSpecCard>
         )}
 
         <SystemSpecCard icon={HardDrive} title={t.storage.title}>
