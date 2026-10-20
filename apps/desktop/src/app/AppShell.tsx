@@ -1,4 +1,5 @@
 import { useState } from "react";
+import mark from "@/assets/brand/aangan-mark.png";
 import { scanHardware } from "@/api/api";
 import type { HardwareProfile, Recommendation } from "@/api/types";
 import { TooltipProvider } from "@/components/primitives/tooltip";
@@ -39,9 +40,12 @@ export function AppShell() {
         {onboarded && <NavRail view={view} onChange={setView} />}
         <div className="flex min-w-0 flex-1 flex-col">
           <header className="flex h-14 shrink-0 items-center justify-between border-b border-border px-8">
-            <div className="flex items-baseline gap-3">
-              <span className="font-display text-base font-semibold">{en.app.name}</span>
-              <span className="text-xs text-muted-foreground">{en.app.tagline}</span>
+            <div className="flex items-center gap-3">
+              {!onboarded && <img src={mark} alt="" width={40} height={40} className="h-10 w-10 rounded-xl" />}
+              <div className="flex items-baseline gap-3">
+                <span className="font-display text-base font-semibold">{en.app.name}</span>
+                <span className="text-xs text-muted-foreground">{en.app.tagline}</span>
+              </div>
             </div>
             <DevPresetSwitch />
           </header>

@@ -15,7 +15,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/primitives
 import { en } from "@/i18n/en";
 import { EstimateBadge } from "../EstimateBadge";
 import { formatBytes } from "../scan/format";
-import { availableFor, FIT_VARIANT } from "./fit";
+import { FitBadge } from "./FitBadge";
+import { availableFor } from "./fit";
 import { describePlacement, describeReason } from "./placement";
 
 export function ModelDetailDialog({
@@ -46,8 +47,8 @@ export function ModelDetailDialog({
               <>
                 <DialogHeader className="gap-2">
                   <div className="flex flex-wrap gap-1.5">
-                    <Badge variant={FIT_VARIANT[estimate.fit]}>{en.fit[estimate.fit]}</Badge>
-                    {rec.badges.includes("best_fit") && <Badge>{en.badges.best_fit}</Badge>}
+                    <FitBadge fit={estimate.fit} />
+                    {rec.badges.includes("best_fit") && <Badge variant="accent">{en.badges.best_fit}</Badge>}
                     {rec.badges.includes("fastest") && <Badge variant="secondary">{en.badges.fastest}</Badge>}
                   </div>
                   <DialogTitle className="font-display text-2xl">{model.name}</DialogTitle>

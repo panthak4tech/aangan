@@ -3,6 +3,8 @@
 Aangan is an offline-first Windows desktop app built with Tauri 2, React, and
 TypeScript. Hardware probing and model recommendations run through the Rust
 workspace; the browser preview uses local mock hardware profiles and estimates.
+The UI uses a light green semantic palette defined in `src/styles/tokens.css`;
+dark mode is not implemented yet.
 The production WebView CSP allows local assets and Tauri IPC only. The NSIS
 installer targets the current user and does not require administrator access.
 The custom NSIS template ignores unrelated processes reported by Windows

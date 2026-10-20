@@ -12,14 +12,14 @@ export function Stepper({ items }: { items: { id: string; label: string; status:
           className={cn(
             "flex items-center gap-3 rounded-xl border border-border px-4 py-3 text-sm transition-colors",
             it.status === "pending" && "text-muted-foreground",
-            it.status === "active" && "border-primary bg-accent text-accent-foreground",
+            it.status === "active" && "border-primary bg-primary-soft text-primary-soft-foreground",
             it.status === "done" && "text-foreground",
           )}
         >
           <span
             className={cn(
               "flex h-6 w-6 items-center justify-center rounded-full border border-border",
-              it.status === "done" && "border-transparent bg-fit-great text-fit-foreground",
+              it.status === "done" && "border-transparent bg-fit-great text-fit-great-fg",
             )}
           >
             {it.status === "done" && <Check className="h-3.5 w-3.5" />}
