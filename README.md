@@ -2,7 +2,7 @@
 
 Find out which open AI models your PC can run, and how fast, before you download anything.
 
-> Status: v0.1 (command line). Windows first. Offline: nothing is sent anywhere.
+> Status: CLI v0.1; desktop v0.2.0. Windows first. Offline: nothing is sent anywhere.
 
 ## Try it
 
