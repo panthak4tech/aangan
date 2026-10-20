@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { configDefaults, defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "node:path";
@@ -36,6 +36,22 @@ export default defineConfig(() => ({
     watch: {
       // 3. tell Vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],
+    },
+  },
+  test: {
+    environment: "jsdom",
+    setupFiles: ["./src/test/setup.ts"],
+    coverage: {
+      provider: "v8" as const,
+      reporter: ["text-summary", "lcov", "cobertura"],
+      include: ["src/**/*.{ts,tsx}"],
+      exclude: [
+        ...configDefaults.exclude,
+        "src/**/*.d.ts",
+        "src/main.tsx",
+        "src/test/**",
+        "src/components/ui/**",
+      ],
     },
   },
 }));
