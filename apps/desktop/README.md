@@ -19,7 +19,9 @@ On the Scan page, save a hardware report through the native file picker or copy
 its JSON to the clipboard. Settings → Data shows the app's local data folder
 with actions to open or copy its path. On the Models page, enable "Show models
 that won't fit" to see larger catalog entries and their estimated memory
-requirements; this choice is remembered.
+requirements; this choice is remembered. The Scan page lists detected graphics
+adapters and only shows the built-in-graphics note when no discrete GPU is
+detected.
 
 ## Development
 
