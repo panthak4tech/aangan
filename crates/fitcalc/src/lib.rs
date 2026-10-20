@@ -145,7 +145,7 @@ mod tests {
     }
 
     #[test]
-    fn recommendations_rank_by_speed_and_mark_fastest() {
+    fn recommendations_rank_by_speed_and_mark_best_fit_and_fastest_separately() {
         let mut largest = model();
         largest.id = "largest".into();
         largest.name = "Largest".into();
@@ -166,10 +166,6 @@ mod tests {
         assert!(recommendations[0]
             .badges
             .iter()
-            .any(|badge| badge == "best_fit"));
-        assert!(recommendations[0]
-            .badges
-            .iter()
             .any(|badge| badge == "fastest"));
         assert_eq!(
             recommendations
@@ -177,6 +173,16 @@ mod tests {
                 .find(|recommendation| recommendation.badges.iter().any(|badge| badge == "fastest"))
                 .map(|recommendation| recommendation.model.id.as_str()),
             Some("smaller")
+        );
+        assert_eq!(
+            recommendations
+                .iter()
+                .find(|recommendation| recommendation
+                    .badges
+                    .iter()
+                    .any(|badge| badge == "best_fit"))
+                .map(|recommendation| recommendation.model.id.as_str()),
+            Some("largest")
         );
     }
 }

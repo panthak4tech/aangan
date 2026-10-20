@@ -78,12 +78,18 @@ fn validate_save_request(
 }
 
 #[tauri::command]
-fn save_text_file(path: String, contents: String) -> Result<SavedFile, String> {
-    let path = Path::new(&path);
+async fn save_text_file(path: String, contents: String) -> Result<SavedFile, String> {
+    tauri::async_runtime::spawn_blocking(move || save_text_file_blocking(&path, &contents))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+fn save_text_file_blocking(path: &str, contents: &str) -> Result<SavedFile, String> {
+    let path = Path::new(path);
     let parent = path
         .parent()
         .ok_or_else(|| "the parent directory does not exist".to_string())?;
-    validate_save_request(path, &contents, parent.is_dir())?;
+    validate_save_request(path, contents, parent.is_dir())?;
 
     let mut temporary = tempfile::NamedTempFile::new_in(parent)
         .map_err(|error| format!("could not create a temporary file: {error}"))?;
@@ -139,7 +145,8 @@ pub fn run() -> Result<(), tauri::Error> {
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_TEXT_FILE_BYTES, app_paths_for_existing_dir, save_text_file, validate_save_request,
+        MAX_TEXT_FILE_BYTES, app_paths_for_existing_dir, save_text_file_blocking,
+        validate_save_request,
     };
     use std::path::Path;
 
@@ -152,15 +159,17 @@ mod tests {
 
     #[test]
     fn save_validation_rejects_unsupported_extensions() {
-        let error = validate_save_request(Path::new("C:\\reports\\report.csv"), "{}", true)
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let error = validate_save_request(&directory.path().join("report.csv"), "{}", true)
             .expect_err("unsupported extension should be rejected");
         assert!(error.contains("extension"));
     }
 
     #[test]
     fn save_validation_rejects_oversize_contents() {
+        let directory = tempfile::tempdir().expect("temporary directory");
         let contents = "x".repeat(MAX_TEXT_FILE_BYTES + 1);
-        let error = validate_save_request(Path::new("C:\\reports\\report.txt"), &contents, true)
+        let error = validate_save_request(&directory.path().join("report.txt"), &contents, true)
             .expect_err("oversize contents should be rejected");
         assert!(error.contains("5 MiB"));
     }
@@ -171,8 +180,8 @@ mod tests {
         let path = directory.path().join("report.json");
         let contents = "{\"report\":\"Aangan\"}";
 
-        let saved = save_text_file(path.to_string_lossy().into_owned(), contents.to_string())
-            .expect("first save");
+        let saved =
+            save_text_file_blocking(path.to_string_lossy().as_ref(), contents).expect("first save");
         assert_eq!(saved.path, path.to_string_lossy());
         assert_eq!(saved.bytes, contents.len());
         assert_eq!(
@@ -181,8 +190,7 @@ mod tests {
         );
 
         let replacement = "{\"report\":\"updated\"}";
-        save_text_file(path.to_string_lossy().into_owned(), replacement.to_string())
-            .expect("overwrite");
+        save_text_file_blocking(path.to_string_lossy().as_ref(), replacement).expect("overwrite");
         assert_eq!(
             std::fs::read(&path).expect("read overwritten report"),
             replacement.as_bytes()

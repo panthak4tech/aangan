@@ -230,10 +230,10 @@ describe("ScanView", () => {
     await waitFor(() =>
       expect(copyHardwareReport).toHaveBeenCalledWith(JSON.stringify(PRESETS.laptop8_cpu, null, 2)),
     );
-    expect(await screen.findByText("Hardware report copied to clipboard")).toBeInTheDocument();
+    expect(await screen.findByText(en.views.scan.reportCopied)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: en.views.scan.saveFile }));
-    expect(await screen.findByText("Hardware report saved to C:\\reports\\report.json")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Show in folder" }));
+    expect(await screen.findByText(en.views.scan.reportSaved("C:\\reports\\report.json"))).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: en.views.scan.showInFolder }));
     await waitFor(() => expect(revealItemInDir).toHaveBeenCalledWith("C:\\reports\\report.json"));
   });
 
@@ -243,9 +243,9 @@ describe("ScanView", () => {
     renderScanView();
 
     fireEvent.click(screen.getByRole("button", { name: en.views.scan.copyJson }));
-    expect(await screen.findByText("Couldn't copy the report: clipboard unavailable")).toBeInTheDocument();
+    expect(await screen.findByText(en.views.scan.copyReportFailed("clipboard unavailable"))).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: en.views.scan.saveFile }));
-    expect(await screen.findByText("Couldn't save the report: disk full")).toBeInTheDocument();
+    expect(await screen.findByText(en.views.scan.saveFailed("disk full"))).toBeInTheDocument();
   });
 
   it("shows no save toast when the dialog is cancelled", async () => {

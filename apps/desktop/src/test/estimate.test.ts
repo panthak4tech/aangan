@@ -93,3 +93,16 @@ it("ranks usable models before slower ones and marks the fastest result", () => 
   expect(fastest.badges).toContain("fastest");
   expect(recommendations.filter((item) => item.badges.includes("best_fit"))).toHaveLength(1);
 });
+
+it("marks the largest good-fitting model separately from the fastest model", () => {
+  const recommendations = rankModels(
+    PRESETS.laptop8_cpu,
+    [getModel("0.5b-instruct"), getModel("1.5b-instruct")],
+    512,
+  );
+  const bestFit = recommendations.find((item) => item.badges.includes("best_fit"));
+  const fastest = recommendations.find((item) => item.badges.includes("fastest"));
+
+  expect(bestFit?.model.id).toContain("1.5b");
+  expect(fastest?.model.id).toContain("0.5b");
+});

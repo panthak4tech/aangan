@@ -34,9 +34,9 @@ export function ScanView({ profile, scanning, scanError, onRescan }: Props) {
     setCopying(true);
     try {
       await copyHardwareReport(json);
-      toast("Hardware report copied to clipboard", { variant: "success" });
+      toast(t.reportCopied, { variant: "success" });
     } catch (error) {
-      toast(`Couldn't copy the report: ${errorMessage(error)}`, { variant: "destructive" });
+      toast(t.copyReportFailed(errorMessage(error)), { variant: "destructive" });
     } finally {
       setCopying(false);
     }
@@ -46,20 +46,20 @@ export function ScanView({ profile, scanning, scanError, onRescan }: Props) {
     try {
       const path = await saveHardwareReport(json);
       if (path === null) return;
-      toast(`Hardware report saved to ${path}`, {
+      toast(t.reportSaved(path), {
         variant: "success",
         action: {
-          label: "Show in folder",
+          label: t.showInFolder,
           onClick: () => {
             void revealItemInDir(path)
               .catch((error: unknown) => {
-                toast(`Couldn't open the folder: ${errorMessage(error)}`, { variant: "destructive" });
+                toast(t.revealFailed(errorMessage(error)), { variant: "destructive" });
               });
           },
         },
       });
     } catch (error) {
-      toast(`Couldn't save the report: ${errorMessage(error)}`, { variant: "destructive" });
+      toast(t.saveFailed(errorMessage(error)), { variant: "destructive" });
     } finally {
       setSaving(false);
     }

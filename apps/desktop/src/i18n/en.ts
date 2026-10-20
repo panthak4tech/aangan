@@ -19,6 +19,12 @@ export const en = {
       copyFailed: "Couldn't copy to the clipboard.",
       saveFile: "Save as file",
       fileName: "aangan-hardware-report.json",
+      reportCopied: "Hardware report copied to clipboard",
+      copyReportFailed: (reason: string) => `Couldn't copy the report: ${reason}`,
+      reportSaved: (path: string) => `Hardware report saved to ${path}`,
+      showInFolder: "Show in folder",
+      revealFailed: (reason: string) => `Couldn't open the folder: ${reason}`,
+      saveFailed: (reason: string) => `Couldn't save the report: ${reason}`,
       scanFailed: "The scan didn't finish. Your previous results are still shown.",
       cpu: {
         title: "Processor",

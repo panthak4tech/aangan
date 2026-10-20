@@ -88,10 +88,19 @@ export function rankModels(p: HardwareProfile, models: ModelSpec[], context: num
     if (aWontFit) return a.model.file_size_bytes - b.model.file_size_bytes;
     return b.estimate.decode_tps - a.estimate.decode_tps;
   });
+  let bestFit: (typeof rows)[number] | undefined;
+  for (const row of rows) {
+    if (
+      (row.estimate.fit === "great" || row.estimate.fit === "good") &&
+      (!bestFit || row.model.params_b > bestFit.model.params_b)
+    ) {
+      bestFit = row;
+    }
+  }
   const fastest = Math.max(...rows.map((r) => r.estimate.decode_tps));
   return rows.map((r, i) => {
     const badges: string[] = [];
-    if (i === 0 && r.estimate.fit !== "wont_fit") badges.push("best_fit");
+    if (r.model.id === bestFit?.model.id) badges.push("best_fit");
     if (r.estimate.decode_tps === fastest && fastest > 0) badges.push("fastest");
     return { ...r, rank: i + 1, badges };
   });

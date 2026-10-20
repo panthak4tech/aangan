@@ -48,7 +48,8 @@ pub fn recommend(
         .map(|(model, _)| model.id.clone());
     let best_id = items
         .iter()
-        .find(|(_, estimate)| estimate.fit >= Fit::Good)
+        .filter(|(_, estimate)| estimate.fit >= Fit::Good)
+        .max_by(|(model_a, _), (model_b, _)| compare_speed(model_a.params_b, model_b.params_b))
         .map(|(model, _)| model.id.clone());
 
     items
