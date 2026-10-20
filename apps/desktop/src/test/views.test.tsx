@@ -1,6 +1,13 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { recommendModels, scanHardware } from "@/api/api";
+import {
+  copyHardwareReport,
+  getAppPaths,
+  recommendModels,
+  saveHardwareReport,
+  scanHardware,
+} from "@/api/api";
 import { MODELS, PRESETS } from "@/api/presets";
 import { rankModels } from "@/api/estimate";
 import { en } from "@/i18n/en";
@@ -9,14 +16,23 @@ import { ScanView } from "@/app/views/ScanView";
 import { SettingsView } from "@/app/views/SettingsView";
 import { FirstRunWizard } from "@/app/wizard/FirstRunWizard";
 import { TooltipProvider } from "@/components/primitives/tooltip";
+import { ToastProvider } from "@/components/ui/toast-provider";
+
+vi.mock("@tauri-apps/plugin-opener", () => ({
+  openPath: vi.fn(),
+  revealItemInDir: vi.fn(),
+}));
+import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 
 vi.mock("@/api/api", () => ({
+  copyHardwareReport: vi.fn(),
+  getAppPaths: vi.fn(),
   recommendModels: vi.fn(),
+  saveHardwareReport: vi.fn(),
   scanHardware: vi.fn(),
   APP_INFO: {
     version: "0.2.0",
     license: "MIT",
-    data_dir: "C:\\Aangan",
     languages: [
       { code: "en", available: true },
       { code: "hi", available: false },
@@ -26,7 +42,23 @@ vi.mock("@/api/api", () => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  window.localStorage.removeItem("aangan.models.showWontFit");
+  vi.mocked(openPath).mockResolvedValue();
+  vi.mocked(revealItemInDir).mockResolvedValue();
 });
+
+function renderScanView() {
+  return render(
+    <ToastProvider>
+      <ScanView
+        profile={PRESETS.laptop8_cpu}
+        scanning={false}
+        scanError={false}
+        onRescan={vi.fn()}
+      />
+    </ToastProvider>,
+  );
+}
 
 describe("ModelsView", () => {
   it("shows the scan-first empty state when no hardware profile exists", () => {
@@ -64,24 +96,71 @@ describe("ModelsView", () => {
     expect(recommendModels).toHaveBeenCalledWith(PRESETS.desktop_3060, 4096);
   });
 
-  it("allows toggling models that do not fit and shows the too-slow guidance", async () => {
+  it("reveals non-fitting models in a separate section with a keyboard-operable switch", async () => {
     const recommendations = rankModels(PRESETS.desktop_3060, MODELS, 4096).map((item, index) =>
       index === 0
-        ? { ...item, estimate: { ...item.estimate, fit: "wont_fit" as const } }
+        ? {
+            ...item,
+            estimate: {
+              ...item.estimate,
+              fit: "wont_fit" as const,
+              placement: { kind: "no_fit" as const },
+              memory_required_bytes: 8 * 1024 ** 3,
+              reasons: ["reason_no_fit"],
+            },
+          }
         : { ...item, estimate: { ...item.estimate, fit: "too_slow" as const } },
     );
     vi.mocked(recommendModels).mockResolvedValue(recommendations);
+    const { unmount } = render(
+      <TooltipProvider>
+        <ModelsView profile={PRESETS.laptop8_cpu} />
+      </TooltipProvider>,
+    );
+
+    expect(await screen.findByText(en.views.models.nothingFits.title)).toBeInTheDocument();
+    expect(screen.queryByText(recommendations[0].model.name)).not.toBeInTheDocument();
+    const toggle = screen.getByRole("switch", { name: "Show models that won't fit (1)" });
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    toggle.focus();
+    await userEvent.setup().keyboard(" ");
+    await waitFor(() =>
+      expect(screen.getByText(recommendations[0].model.name)).toBeInTheDocument(),
+    );
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    expect(window.localStorage.getItem("aangan.models.showWontFit")).toBe("true");
+    expect(screen.getByRole("heading", { name: en.views.models.wontFitTitle })).toBeInTheDocument();
+    expect(screen.getByText(/Needs .* — this PC has .* system memory available\./)).toBeInTheDocument();
+
+    unmount();
+    render(
+      <TooltipProvider>
+        <ModelsView profile={PRESETS.laptop8_cpu} />
+      </TooltipProvider>,
+    );
+    expect(await screen.findByRole("switch", { name: "Show models that won't fit (1)" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+  });
+
+  it("explains when every catalog model fits without adding a zero count", async () => {
+    vi.mocked(recommendModels).mockResolvedValue(
+      rankModels(PRESETS.desktop_3060, MODELS, 4096).map((item) => ({
+        ...item,
+        estimate: { ...item.estimate, fit: "good" as const },
+      })),
+    );
     render(
       <TooltipProvider>
         <ModelsView profile={PRESETS.desktop_3060} />
       </TooltipProvider>,
     );
 
-    expect(await screen.findByText(en.views.models.nothingFits.title)).toBeInTheDocument();
-    expect(screen.queryByText(recommendations[0].model.name)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("switch"));
-    await waitFor(() =>
-      expect(screen.getByText(recommendations[0].model.name)).toBeInTheDocument(),
+    expect(await screen.findByText(en.views.models.everyModelFits)).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: en.views.models.showWontFit })).toHaveAttribute(
+      "aria-checked",
+      "false",
     );
   });
 
@@ -106,17 +185,16 @@ describe("ScanView", () => {
   it("shows the empty state without a profile and the scanning state while probing", () => {
     const onRescan = vi.fn();
     const { rerender } = render(
-      <ScanView profile={null} scanning={false} scanError={false} onRescan={onRescan} />,
+      <ToastProvider>
+        <ScanView profile={null} scanning={false} scanError={false} onRescan={onRescan} />
+      </ToastProvider>,
     );
     expect(screen.getByText(en.views.scan.empty)).toBeInTheDocument();
 
     rerender(
-      <ScanView
-        profile={PRESETS.desktop_3060}
-        scanning
-        scanError
-        onRescan={onRescan}
-      />,
+      <ToastProvider>
+        <ScanView profile={PRESETS.desktop_3060} scanning scanError onRescan={onRescan} />
+      </ToastProvider>,
     );
     expect(screen.getByLabelText(en.views.scan.scanning)).toHaveAttribute(
       "aria-busy",
@@ -127,12 +205,14 @@ describe("ScanView", () => {
 
   it("renders CPU, integrated GPU, memory, storage and measurement details", () => {
     render(
-      <ScanView
-        profile={PRESETS.laptop16_igpu}
-        scanning={false}
-        scanError={false}
-        onRescan={vi.fn()}
-      />,
+      <ToastProvider>
+        <ScanView
+          profile={PRESETS.laptop16_igpu}
+          scanning={false}
+          scanError={false}
+          onRescan={vi.fn()}
+        />
+      </ToastProvider>,
     );
 
     expect(screen.getByText(en.views.scan.integratedAlertTitle)).toBeInTheDocument();
@@ -142,48 +222,78 @@ describe("ScanView", () => {
     expect(screen.getByText(en.views.scan.storage.title)).toBeInTheDocument();
   });
 
-  it("copies the JSON report and downloads a local file", async () => {
+  it("shows success feedback after copy and saving the report", async () => {
+    vi.mocked(copyHardwareReport).mockResolvedValue();
+    vi.mocked(saveHardwareReport).mockResolvedValue("C:\\reports\\report.json");
+    renderScanView();
+    fireEvent.click(screen.getByRole("button", { name: en.views.scan.copyJson }));
+    await waitFor(() =>
+      expect(copyHardwareReport).toHaveBeenCalledWith(JSON.stringify(PRESETS.laptop8_cpu, null, 2)),
+    );
+    expect(await screen.findByText("Hardware report copied to clipboard")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: en.views.scan.saveFile }));
+    expect(await screen.findByText("Hardware report saved to C:\\reports\\report.json")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show in folder" }));
+    await waitFor(() => expect(revealItemInDir).toHaveBeenCalledWith("C:\\reports\\report.json"));
+  });
+
+  it("shows an error toast when saving or copying fails", async () => {
+    vi.mocked(copyHardwareReport).mockRejectedValue(new Error("clipboard unavailable"));
+    vi.mocked(saveHardwareReport).mockRejectedValue(new Error("disk full"));
+    renderScanView();
+
+    fireEvent.click(screen.getByRole("button", { name: en.views.scan.copyJson }));
+    expect(await screen.findByText("Couldn't copy the report: clipboard unavailable")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: en.views.scan.saveFile }));
+    expect(await screen.findByText("Couldn't save the report: disk full")).toBeInTheDocument();
+  });
+
+  it("shows no save toast when the dialog is cancelled", async () => {
+    vi.mocked(saveHardwareReport).mockResolvedValue(null);
+    renderScanView();
+
+    fireEvent.click(screen.getByRole("button", { name: en.views.scan.saveFile }));
+    await waitFor(() => expect(saveHardwareReport).toHaveBeenCalled());
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+});
+
+describe("SettingsView and FirstRunWizard", () => {
+  it("renders the real data path and supports open and copy actions", async () => {
+    const dataDir = "C:\\Users\\partv\\AppData\\Local\\io.github.panthak4tech.aangan";
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: { writeText },
     });
-    Object.defineProperty(URL, "createObjectURL", {
-      configurable: true,
-      value: vi.fn(() => "blob:hardware-report"),
-    });
-    Object.defineProperty(URL, "revokeObjectURL", {
-      configurable: true,
-      value: vi.fn(),
-    });
-    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
-    render(
-      <ScanView
-        profile={PRESETS.laptop8_cpu}
-        scanning={false}
-        scanError={false}
-        onRescan={vi.fn()}
-      />,
-    );
+    vi.mocked(getAppPaths).mockResolvedValue({ data_dir: dataDir, data_dir_exists: true });
+    render(<ToastProvider><SettingsView /></ToastProvider>);
 
-    fireEvent.click(screen.getByRole("button", { name: en.views.scan.copyJson }));
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith(JSON.stringify(PRESETS.laptop8_cpu, null, 2)));
-    expect(await screen.findByText(en.views.scan.copied)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: en.views.scan.saveFile }));
-    expect(URL.createObjectURL).toHaveBeenCalled();
-    expect(click).toHaveBeenCalled();
-    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:hardware-report");
-  });
-});
-
-describe("SettingsView and FirstRunWizard", () => {
-  it("renders privacy, data, language and about settings", () => {
-    render(<SettingsView />);
-
+    expect(await screen.findByText(dataDir)).toBeInTheDocument();
     expect(screen.getByText(en.views.settings.privacy.title)).toBeInTheDocument();
-    expect(screen.getByText("C:\\Aangan")).toBeInTheDocument();
     expect(screen.getByText(en.views.settings.language.options.hi)).toBeInTheDocument();
     expect(screen.getByText(en.views.settings.about.notices)).toBeInTheDocument();
+    expect(screen.getByText(en.views.settings.data.hint)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: en.views.settings.data.openFolder }));
+    await waitFor(() => expect(openPath).toHaveBeenCalledWith(dataDir));
+    fireEvent.click(screen.getByRole("button", { name: en.views.settings.data.copyPath }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(dataDir));
+    expect(await screen.findByText(en.views.settings.data.copied)).toBeInTheDocument();
+  });
+
+  it("shows an explicit loading skeleton while reading the data path", () => {
+    vi.mocked(getAppPaths).mockReturnValue(new Promise(() => {}));
+    render(<ToastProvider><SettingsView /></ToastProvider>);
+    expect(screen.getByRole("status", { name: en.views.settings.data.loading })).toBeInTheDocument();
+  });
+
+  it("shows an explicit data-path error", async () => {
+    vi.mocked(getAppPaths).mockRejectedValue(new Error("path access denied"));
+    render(<ToastProvider><SettingsView /></ToastProvider>);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Couldn't read the data folder: path access denied",
+    );
   });
 
   it("completes first-run scanning and reports the selected bandwidth option", async () => {

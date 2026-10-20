@@ -131,13 +131,14 @@ export const MODELS: ModelSpec[] = [
   spec("qwen2.5-3b-instruct-q4_k_m", "Qwen2.5 3B Instruct", 3, 1.9, 36, 2, 128, ["chat"], qwenResearch),
   spec("qwen2.5-7b-instruct-q4_k_m", "Qwen2.5 7B Instruct", 7, 4.7, 28, 4, 128, ["chat", "coding"]),
   spec("qwen2.5-14b-instruct-q4_k_m", "Qwen2.5 14B Instruct", 14, 9.0, 48, 8, 128, ["chat", "reasoning"], apache, false),
+  spec("qwen2.5-32b-instruct-q4_k_m", "Qwen2.5 32B Instruct", 32.5, 19.8, 64, 8, 128, ["chat", "large"], apache, false),
+  spec("qwen2.5-72b-instruct-q4_k_m", "Qwen2.5 72B Instruct", 72.7, 44.4, 80, 8, 128, ["chat", "large"], apache, false),
 ];
 
-// Mock app info. In Tauri these come from package metadata and the app's own paths.
+// Mock app info. In Tauri these come from package metadata.
 export const APP_INFO = {
   version: "0.2.0",
   license: "MIT",
-  data_dir: "C:\\Users\\you\\AppData\\Local\\Aangan",
   languages: [
     { code: "en", available: true },
     { code: "hi", available: false },

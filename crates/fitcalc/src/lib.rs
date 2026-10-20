@@ -69,7 +69,7 @@ mod tests {
     #[test]
     fn parses_builtin_catalog() {
         let catalog = builtin_catalog();
-        assert_eq!(catalog.len(), 5);
+        assert_eq!(catalog.len(), 7);
         assert!(catalog.iter().all(|model| !model.verified));
     }
 
@@ -145,7 +145,7 @@ mod tests {
     }
 
     #[test]
-    fn recommendations_rank_largest_good_fit_first_and_mark_fastest() {
+    fn recommendations_rank_by_speed_and_mark_fastest() {
         let mut largest = model();
         largest.id = "largest".into();
         largest.name = "Largest".into();
@@ -162,11 +162,15 @@ mod tests {
         let recommendations =
             recommend(&profile(), &[smaller, largest], 2048, &Tunables::default());
 
-        assert_eq!(recommendations[0].model.id, "largest");
+        assert_eq!(recommendations[0].model.id, "smaller");
         assert!(recommendations[0]
             .badges
             .iter()
             .any(|badge| badge == "best_fit"));
+        assert!(recommendations[0]
+            .badges
+            .iter()
+            .any(|badge| badge == "fastest"));
         assert_eq!(
             recommendations
                 .iter()

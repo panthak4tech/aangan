@@ -18,18 +18,37 @@ export function availableFor(p: HardwareProfile, e: Estimate): { bytes: number; 
   return { bytes: p.memory.available_bytes, onGpu: false };
 }
 
-export function filterRecs(recs: Recommendation[], query: string, showWontFit: boolean): Recommendation[] {
+export interface FilteredRecommendations {
+  fitting: Recommendation[];
+  wontFit: Recommendation[];
+  wontFitCount: number;
+}
+
+export function filterRecs(
+  recs: Recommendation[],
+  query: string,
+  showWontFit: boolean,
+): FilteredRecommendations {
   const q = query.trim().toLowerCase();
-  return recs
-    .filter((r) => showWontFit || r.estimate.fit !== "wont_fit")
-    .filter(
-      (r) =>
-        !q ||
-        r.model.name.toLowerCase().includes(q) ||
-        r.model.family.toLowerCase().includes(q) ||
-        r.model.tags.some((t) => t.toLowerCase().includes(q)),
-    )
-    .sort((a, b) => a.rank - b.rank);
+  const matches = recs.filter(
+    (r) =>
+      !q ||
+      r.model.name.toLowerCase().includes(q) ||
+      r.model.family.toLowerCase().includes(q) ||
+      r.model.tags.some((t) => t.toLowerCase().includes(q)),
+  );
+  const fitting = matches
+    .filter((r) => r.estimate.fit !== "wont_fit")
+    .sort((a, b) => b.estimate.decode_tps - a.estimate.decode_tps);
+  const wontFit = matches
+    .filter((r) => r.estimate.fit === "wont_fit")
+    .sort((a, b) => a.model.file_size_bytes - b.model.file_size_bytes);
+
+  return {
+    fitting,
+    wontFit: showWontFit ? wontFit : [],
+    wontFitCount: recs.filter((r) => r.estimate.fit === "wont_fit").length,
+  };
 }
 
 export function nothingFitsComfortably(recs: Recommendation[]): boolean {
