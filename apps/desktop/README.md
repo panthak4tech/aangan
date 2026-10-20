@@ -21,7 +21,8 @@ with actions to open or copy its path. On the Models page, enable "Show models
 that won't fit" to see larger catalog entries and their estimated memory
 requirements; this choice is remembered. The Scan page lists detected graphics
 adapters and only shows the built-in-graphics note when no discrete GPU is
-detected.
+detected. Known integrated adapters are identified by PCI device ID; unrecognized
+IDs are categorized as discrete.
 
 ## Development
 
