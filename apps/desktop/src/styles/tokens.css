@@ -1,0 +1,36 @@
+:root {
+  color-scheme: light;
+  --color-bg: #FFFFFF;
+  --color-bg-subtle: #F5FAF6;
+  --color-surface: #FFFFFF;
+  --color-surface-muted: #EDF5EF;
+  --color-border: #D5E5D9;
+  --color-border-strong: #A9C8B2;
+  --color-text: #10241A;
+  --color-text-muted: #466052;
+  --color-primary: #1B7F4B;
+  --color-primary-hover: #156A3E;
+  --color-primary-fg: #FFFFFF;
+  --color-primary-soft: #E2F2E7;
+  --color-primary-soft-fg: #0F5130;
+  --color-accent: #F0B84A;
+  --color-accent-fg: #3B2A00;
+  --color-accent-soft: #FFF3D0;
+  --color-accent-soft-fg: #7A5200;
+  --fit-great-bg: #DDF1E3;
+  --fit-great-fg: #0F5130;
+  --fit-good-bg: #EAF3D3;
+  --fit-good-fg: #3F5D0B;
+  --fit-slow-bg: #FFF0C2;
+  --fit-slow-fg: #6B4A00;
+  --fit-tooslow-bg: #FCE3D4;
+  --fit-tooslow-fg: #8A3A0F;
+  --fit-wont-bg: #EEF0EE;
+  --fit-wont-fg: #4A524D;
+  --color-danger: #B3261E;
+  --color-danger-soft: #FBE4E2;
+}
+
+:root[data-theme="dark"] {
+  /* TODO(night-mode): override tokens here */
+}

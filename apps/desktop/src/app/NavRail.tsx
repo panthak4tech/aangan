@@ -1,4 +1,5 @@
 import { Cpu, LayoutGrid, Settings } from "lucide-react";
+import mark from "@/assets/brand/aangan-mark.png";
 import { cn } from "@/lib/utils";
 import { en } from "@/i18n/en";
 
@@ -16,9 +17,7 @@ export function NavRail({ view, onChange }: { view: View; onChange: (v: View) =>
       aria-label={en.nav.label}
       className="flex w-24 shrink-0 flex-col items-center gap-2 border-r border-sidebar-border bg-sidebar py-5"
     >
-      <div className="mb-6 flex h-10 w-10 items-center justify-center rounded-xl bg-sidebar-primary font-display text-lg font-semibold text-sidebar-primary-foreground">
-        {en.app.name.charAt(0)}
-      </div>
+      <img src={mark} alt={en.app.name} width={40} height={40} className="mb-6 h-10 w-10 rounded-xl" />
       {ITEMS.map(({ id, icon: Icon }) => {
         const active = view === id;
         return (

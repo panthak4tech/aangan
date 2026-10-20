@@ -100,7 +100,7 @@ export function FirstRunWizard({ onComplete }: { onComplete: (p: HardwareProfile
         <ul className="flex flex-col gap-3">
           {points.map(({ icon: Icon, text }) => (
             <li key={text} className="flex items-center gap-3 text-sm text-foreground">
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent text-accent-foreground">
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-soft text-primary-soft-foreground">
                 <Icon className="h-4 w-4" />
               </span>
               {text}
@@ -174,8 +174,8 @@ export function FirstRunWizard({ onComplete }: { onComplete: (p: HardwareProfile
         </Button>
       }
     >
-      <div className="flex items-center gap-3 rounded-xl bg-accent p-4 text-accent-foreground">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-fit-great text-fit-foreground">
+      <div className="flex items-center gap-3 rounded-xl bg-primary-soft p-4 text-primary-soft-foreground">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-fit-great text-fit-great-fg">
           <Check className="h-4 w-4" />
         </span>
         <p className="text-sm font-medium">{summarizeProfile(phase.profile)}</p>

@@ -7,7 +7,8 @@ import { en } from "@/i18n/en";
 import { cn } from "@/lib/utils";
 import { EstimateBadge } from "../EstimateBadge";
 import { formatBytes } from "../scan/format";
-import { availableFor, FIT_VARIANT } from "./fit";
+import { FitBadge } from "./FitBadge";
+import { availableFor } from "./fit";
 
 export function ModelCard({
   rec,
@@ -44,9 +45,9 @@ export function ModelCard({
       )}
     >
       <div className="flex flex-wrap items-center gap-1.5">
-        <Badge variant={FIT_VARIANT[estimate.fit]}>{en.fit[estimate.fit]}</Badge>
+        <FitBadge fit={estimate.fit} />
         {rec.badges.includes("best_fit") && (
-          <Badge>
+          <Badge variant="accent">
             <Sparkles className="mr-1 h-3 w-3" />
             {en.badges.best_fit}
           </Badge>
