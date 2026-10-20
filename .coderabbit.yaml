@@ -1,0 +1,12 @@
+language: en-US
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  path_instructions:
+    - path: "apps/desktop/src/**"
+      instructions: "Flag hard-coded colors, direct network calls from the webview, and missing tests."
+    - path: "crates/**"
+      instructions: "Flag unwrap()/expect() in non-test code, blocking calls on the UI thread, and untested branches."
+    - path: ".github/**"
+      instructions: "Flag unpinned third-party actions, broad permissions, and secrets exposed to forks."

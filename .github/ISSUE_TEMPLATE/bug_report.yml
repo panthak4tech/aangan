@@ -1,0 +1,24 @@
+name: Bug report
+description: Something does not work as expected
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Aangan version
+      placeholder: "0.2.0"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: Hardware report
+      description: In the app, choose "Copy hardware report (JSON)", or run `aangan scan --json`, and paste it here.
+      render: json
