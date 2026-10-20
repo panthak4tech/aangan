@@ -47,10 +47,10 @@ jobs:
           --lcov --output-path lcov.info
           --ignore-filename-regex "$COV_IGNORE"
           --fail-under-lines "$RUST_MIN_LINES"
-      - name: Coverage floor for core crates
-        run: cargo llvm-cov -p fitcalc -p aangan-types --locked --fail-under-lines "$RUST_CORE_MIN_LINES"
       - name: Coverage summary
         run: cargo llvm-cov report --summary-only --ignore-filename-regex "$COV_IGNORE" >> "$GITHUB_STEP_SUMMARY"
+      - name: Coverage floor for core crates
+        run: cargo llvm-cov -p fitcalc -p aangan-types --locked --fail-under-lines "$RUST_CORE_MIN_LINES"
       - uses: actions/upload-artifact@v4
         with:
           name: rust-lcov
