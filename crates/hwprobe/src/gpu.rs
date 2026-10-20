@@ -6,8 +6,9 @@ const AMD_INTEGRATED_DEVICE_IDS: &[u32] = &[
     0x15BF, 0x15D8, 0x15DD, 0x15E7, 0x1636, 0x1638, 0x164C, 0x164E, 0x1681,
 ];
 const INTEL_INTEGRATED_DEVICE_IDS: &[u32] = &[
-    0x1902, 0x1912, 0x1916, 0x1926, 0x1932, 0x3E92, 0x3EA0, 0x3EA5, 0x4680, 0x4682, 0x46A6, 0x5912,
-    0x5916, 0x5926, 0x7D55, 0x8A52, 0x8A5A, 0x9A40, 0x9A49, 0x9A59, 0x9A60, 0xA780, 0xA7A0,
+    0x1902, 0x1912, 0x1916, 0x1926, 0x1932, 0x3E92, 0x3EA0, 0x3EA5, 0x4680, 0x4682, 0x46A6, 0x46A8,
+    0x5912, 0x5916, 0x5926, 0x7D55, 0x8A52, 0x8A5A, 0x9A40, 0x9A49, 0x9A59, 0x9A60, 0x9A78, 0x9BC5,
+    0xA780, 0xA7A0,
 ];
 
 struct AdapterCandidate {
@@ -281,6 +282,26 @@ mod tests {
 
         assert_eq!(gpus.len(), 1);
         assert!(gpus[0].is_integrated);
+    }
+
+    #[test]
+    fn additional_intel_integrated_device_ids_are_classified_as_integrated() {
+        for device_id in [0x46A8, 0x9A78, 0x9BC5] {
+            let gpus = classify_adapters(vec![candidate(
+                "Intel integrated graphics",
+                GpuVendor::Intel,
+                device_id,
+                512 * 1024 * 1024,
+                false,
+                false,
+            )]);
+
+            assert_eq!(gpus.len(), 1);
+            assert!(
+                gpus[0].is_integrated,
+                "device ID {device_id:#06x} should be classified as integrated"
+            );
+        }
     }
 
     #[test]
