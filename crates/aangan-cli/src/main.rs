@@ -75,11 +75,7 @@ fn main() -> Result<()> {
                     measure_bandwidth: !no_bench,
                 }),
             };
-            let mut recommendations =
-                recommend(&profile, &builtin_catalog(), context, &Tunables::default());
-            if !all {
-                recommendations.retain(|item| item.estimate.fit != Fit::WontFit);
-            }
+            let recommendations = recommendations_for(&profile, context, all);
             if json {
                 println!("{}", serde_json::to_string_pretty(&recommendations)?);
             } else {
@@ -89,6 +85,18 @@ fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn recommendations_for(
+    profile: &HardwareProfile,
+    context: u32,
+    include_wont_fit: bool,
+) -> Vec<Recommendation> {
+    let mut recommendations = recommend(profile, &builtin_catalog(), context, &Tunables::default());
+    if !include_wont_fit {
+        recommendations.retain(|item| item.estimate.fit != Fit::WontFit);
+    }
+    recommendations
 }
 
 fn gb(bytes: u64) -> f64 {
@@ -186,7 +194,8 @@ fn print_recommendations(recommendations: &[Recommendation], context: u32) {
 
 #[cfg(test)]
 mod tests {
-    use super::Cli;
+    use super::{recommendations_for, Cli, Fit};
+    use aangan_types::HardwareProfile;
     use clap::Parser;
 
     #[test]
@@ -208,5 +217,25 @@ mod tests {
             "--all",
         ])
         .is_ok());
+    }
+
+    #[test]
+    fn all_flag_includes_non_fitting_models_with_memory_reasons() {
+        let profile: HardwareProfile =
+            serde_json::from_str(include_str!("../../../fixtures/profiles/cpu_only_8gb.json"))
+                .expect("profile fixture parses");
+        let visible = recommendations_for(&profile, 4096, false);
+        let all = recommendations_for(&profile, 4096, true);
+
+        assert!(visible.iter().all(|item| item.estimate.fit != Fit::WontFit));
+        let non_fitting = all
+            .iter()
+            .find(|item| item.estimate.fit == Fit::WontFit)
+            .expect("--all should include a model that does not fit");
+        assert!(non_fitting
+            .estimate
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("Needs about") && reason.contains("GB")));
     }
 }

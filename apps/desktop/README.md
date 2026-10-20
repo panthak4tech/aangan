@@ -13,6 +13,14 @@ terminates only Aangan's reported process IDs, verifies they have exited, and
 schedules locked application files for removal at reboot. Review this template
 when updating Tauri's NSIS bundler.
 
+## Desktop features
+
+On the Scan page, save a hardware report through the native file picker or copy
+its JSON to the clipboard. Settings → Data shows the app's local data folder
+with actions to open or copy its path. On the Models page, enable "Show models
+that won't fit" to see larger catalog entries and their estimated memory
+requirements; this choice is remembered.
+
 ## Development
 
 From this directory:

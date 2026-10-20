@@ -80,6 +80,38 @@
       "license": { "id": "Apache-2.0", "osi_open": true, "url": "" },
       "tags": ["chat", "large"],
       "verified": false
+    },
+    {
+      "id": "qwen2.5-32b-instruct-q4_k_m",
+      "name": "Qwen2.5 32B Instruct",
+      "family": "Qwen2.5",
+      "params_b": 32.5,
+      "active_params_b": 32.5,
+      "quant": "Q4_K_M",
+      "file_size_bytes": 19800000000,
+      "n_layers": 64,
+      "n_kv_heads": 8,
+      "head_dim": 128,
+      "context_max": 32768,
+      "license": { "id": "Apache-2.0", "osi_open": true, "url": "" },
+      "tags": ["chat", "large"],
+      "verified": false
+    },
+    {
+      "id": "qwen2.5-72b-instruct-q4_k_m",
+      "name": "Qwen2.5 72B Instruct",
+      "family": "Qwen2.5",
+      "params_b": 72.7,
+      "active_params_b": 72.7,
+      "quant": "Q4_K_M",
+      "file_size_bytes": 44400000000,
+      "n_layers": 80,
+      "n_kv_heads": 8,
+      "head_dim": 128,
+      "context_max": 32768,
+      "license": { "id": "Apache-2.0", "osi_open": true, "url": "" },
+      "tags": ["chat", "large"],
+      "verified": false
     }
   ]
 }

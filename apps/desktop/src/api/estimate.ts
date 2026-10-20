@@ -79,22 +79,28 @@ export function estimateModel(p: HardwareProfile, m: ModelSpec, context: number)
   };
 }
 
-const FIT_ORDER: Fit[] = ["great", "good", "slow", "too_slow", "wont_fit"];
-
 export function rankModels(p: HardwareProfile, models: ModelSpec[], context: number): Recommendation[] {
   const rows = models.map((model) => ({ model, estimate: estimateModel(p, model, context) }));
-  // Usable models first, largest usable first (quality), then the rest.
   rows.sort((a, b) => {
-    const fa = FIT_ORDER.indexOf(a.estimate.fit) <= 1 ? 0 : 1;
-    const fb = FIT_ORDER.indexOf(b.estimate.fit) <= 1 ? 0 : 1;
-    if (fa !== fb) return fa - fb;
-    if (fa === 0) return b.model.params_b - a.model.params_b;
-    return FIT_ORDER.indexOf(a.estimate.fit) - FIT_ORDER.indexOf(b.estimate.fit);
+    const aWontFit = a.estimate.fit === "wont_fit";
+    const bWontFit = b.estimate.fit === "wont_fit";
+    if (aWontFit !== bWontFit) return aWontFit ? 1 : -1;
+    if (aWontFit) return a.model.file_size_bytes - b.model.file_size_bytes;
+    return b.estimate.decode_tps - a.estimate.decode_tps;
   });
+  let bestFit: (typeof rows)[number] | undefined;
+  for (const row of rows) {
+    if (
+      (row.estimate.fit === "great" || row.estimate.fit === "good") &&
+      (!bestFit || row.model.params_b > bestFit.model.params_b)
+    ) {
+      bestFit = row;
+    }
+  }
   const fastest = Math.max(...rows.map((r) => r.estimate.decode_tps));
   return rows.map((r, i) => {
     const badges: string[] = [];
-    if (i === 0 && r.estimate.fit !== "wont_fit") badges.push("best_fit");
+    if (r.model.id === bestFit?.model.id) badges.push("best_fit");
     if (r.estimate.decode_tps === fastest && fastest > 0) badges.push("fastest");
     return { ...r, rank: i + 1, badges };
   });

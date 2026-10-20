@@ -46,6 +46,36 @@ fn fourteen_b_does_not_fit_on_8gb_cpu_only() {
 }
 
 #[test]
+fn recommendations_keep_non_fitting_models_with_a_memory_reason() {
+    let recommendations = recommend(&cpu8(), &builtin_catalog(), 4096, &Tunables::default());
+    let non_fitting = recommendations
+        .iter()
+        .find(|item| item.model.id.contains("qwen2.5-14b"))
+        .expect("14B model exists in the catalog");
+
+    assert_eq!(non_fitting.estimate.fit, Fit::WontFit);
+    assert!(non_fitting.estimate.reasons.iter().any(|reason| {
+        reason.contains("Needs about") && reason.contains("GB") && reason.contains("usable")
+    }));
+
+    let fitting: Vec<_> = recommendations
+        .iter()
+        .filter(|item| item.estimate.fit != Fit::WontFit)
+        .collect();
+    assert!(fitting
+        .windows(2)
+        .all(|pair| { pair[0].estimate.decode_tps >= pair[1].estimate.decode_tps }));
+
+    let non_fitting: Vec<_> = recommendations
+        .iter()
+        .filter(|item| item.estimate.fit == Fit::WontFit)
+        .collect();
+    assert!(non_fitting
+        .windows(2)
+        .all(|pair| { pair[0].model.file_size_bytes <= pair[1].model.file_size_bytes }));
+}
+
+#[test]
 fn small_model_is_usable_on_8gb_cpu_only() {
     let estimate = estimate(&cpu8(), &model("qwen2.5-1.5b"), 4096, &Tunables::default());
     assert!(

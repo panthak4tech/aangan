@@ -1,5 +1,7 @@
-import { Check, Copy, Cpu, Download, HardDrive, Info, MemoryStick, MonitorCog, RefreshCw } from "lucide-react";
+import { Copy, Cpu, Download, HardDrive, Info, MemoryStick, MonitorCog, RefreshCw } from "lucide-react";
 import { useState } from "react";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { copyHardwareReport, saveHardwareReport } from "@/api/api";
 import type { HardwareProfile } from "@/api/types";
 import { MetricGauge } from "@/components/aangan/MetricGauge";
 import { SpecRow, SystemSpecCard } from "@/components/aangan/SystemSpecCard";
@@ -7,6 +9,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/primitives/ale
 import { Badge } from "@/components/primitives/badge";
 import { Button } from "@/components/primitives/button";
 import { Skeleton } from "@/components/primitives/skeleton";
+import { useToast } from "@/components/ui/toast-provider";
 import { en } from "@/i18n/en";
 import { formatBytes, formatGbps, hasAvx2 } from "../scan/format";
 import { EmptyView } from "./EmptyView";
@@ -20,31 +23,46 @@ interface Props {
 
 export function ScanView({ profile, scanning, scanError, onRescan }: Props) {
   const t = en.views.scan;
-  const [copied, setCopied] = useState(false);
-  const [copyFailed, setCopyFailed] = useState(false);
+  const [copying, setCopying] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const toast = useToast();
 
   if (!profile) return <EmptyView title={t.title} body={t.empty} icon={Cpu} />;
 
   const json = JSON.stringify(profile, null, 2);
   const copy = async () => {
+    setCopying(true);
     try {
-      await navigator.clipboard.writeText(json);
-      setCopied(true);
-      setCopyFailed(false);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      setCopied(false);
-      setCopyFailed(true);
+      await copyHardwareReport(json);
+      toast(t.reportCopied, { variant: "success" });
+    } catch (error) {
+      toast(t.copyReportFailed(errorMessage(error)), { variant: "destructive" });
+    } finally {
+      setCopying(false);
     }
   };
-  const save = () => {
-    // Local blob download only; no network. Tauri can swap this for a native save dialog.
-    const url = URL.createObjectURL(new Blob([json], { type: "application/json" }));
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = t.fileName;
-    a.click();
-    URL.revokeObjectURL(url);
+  const save = async () => {
+    setSaving(true);
+    try {
+      const path = await saveHardwareReport(json);
+      if (path === null) return;
+      toast(t.reportSaved(path), {
+        variant: "success",
+        action: {
+          label: t.showInFolder,
+          onClick: () => {
+            void revealItemInDir(path)
+              .catch((error: unknown) => {
+                toast(t.revealFailed(errorMessage(error)), { variant: "destructive" });
+              });
+          },
+        },
+      });
+    } catch (error) {
+      toast(t.saveFailed(errorMessage(error)), { variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
   };
 
   const { cpu, memory, gpus, disks } = profile;
@@ -62,11 +80,11 @@ export function ScanView({ profile, scanning, scanError, onRescan }: Props) {
             <RefreshCw className={scanning ? "animate-spin" : undefined} />
             {scanning ? t.scanning : t.scanAgain}
           </Button>
-          <Button variant="outline" onClick={copy}>
-            {copied ? <Check /> : <Copy />}
-            {copied ? t.copied : t.copyJson}
+          <Button variant="outline" onClick={copy} disabled={copying}>
+            <Copy />
+            {t.copyJson}
           </Button>
-          <Button variant="outline" onClick={save}>
+          <Button variant="outline" onClick={save} disabled={saving}>
             <Download />
             {t.saveFile}
           </Button>
@@ -77,13 +95,6 @@ export function ScanView({ profile, scanning, scanError, onRescan }: Props) {
         <Alert variant="destructive">
           <Info className="h-4 w-4" />
           <AlertDescription>{t.scanFailed}</AlertDescription>
-        </Alert>
-      )}
-
-      {copyFailed && (
-        <Alert variant="destructive">
-          <Info className="h-4 w-4" />
-          <AlertDescription>{t.copyFailed}</AlertDescription>
         </Alert>
       )}
 
@@ -174,4 +185,8 @@ export function ScanView({ profile, scanning, scanError, onRescan }: Props) {
       )}
     </section>
   );
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

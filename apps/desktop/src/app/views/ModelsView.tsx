@@ -19,11 +19,15 @@ interface Props {
   onOpenModel?: (rec: Recommendation) => void;
 }
 
+const SHOW_WONT_FIT_KEY = "aangan.models.showWontFit";
+
 export function ModelsView({ profile, onOpenModel }: Props) {
   const t = en.views.models;
   const [context, setContext] = useState<number>(4096);
   const [query, setQuery] = useState("");
-  const [showWontFit, setShowWontFit] = useState(false);
+  const [showWontFit, setShowWontFit] = useState(
+    () => window.localStorage.getItem(SHOW_WONT_FIT_KEY) === "true",
+  );
   const [recs, setRecs] = useState<Recommendation[] | null>(null);
   const [error, setError] = useState(false);
   const [attempt, setAttempt] = useState(0);
@@ -41,7 +45,11 @@ export function ModelsView({ profile, onOpenModel }: Props) {
     };
   }, [profile, context, attempt]);
 
-  const visible = useMemo(() => (recs ? filterRecs(recs, query, showWontFit) : []), [recs, query, showWontFit]);
+  const visible = useMemo(
+    () => filterRecs(recs ?? [], query, showWontFit),
+    [recs, query, showWontFit],
+  );
+  const wontFitLabel = `${t.showWontFit}${visible.wontFitCount > 0 ? ` (${visible.wontFitCount})` : ""}`;
 
   if (!profile) return <EmptyView title={t.title} body={t.empty} icon={LayoutGrid} />;
 
@@ -79,10 +87,20 @@ export function ModelsView({ profile, onOpenModel }: Props) {
           />
         </div>
         <label className="flex h-9 items-center gap-2 text-sm text-foreground">
-          <Switch checked={showWontFit} onCheckedChange={setShowWontFit} />
-          {t.showWontFit}
+          <Switch
+            checked={showWontFit}
+            onCheckedChange={(checked) => {
+              window.localStorage.setItem(SHOW_WONT_FIT_KEY, String(checked));
+              setShowWontFit(checked);
+            }}
+            aria-label={wontFitLabel}
+          />
+          <span>{wontFitLabel}</span>
         </label>
       </div>
+      {recs && visible.wontFitCount === 0 && (
+        <p className="text-sm text-muted-foreground">{t.everyModelFits}</p>
+      )}
 
       {error && (
         <ErrorState
@@ -109,16 +127,32 @@ export function ModelsView({ profile, onOpenModel }: Props) {
         />
       )}
 
-      {recs && visible.length === 0 && !nothingFitsComfortably(recs) && (
+      {recs
+        && visible.fitting.length === 0
+        && visible.wontFit.length === 0
+        && !nothingFitsComfortably(recs) && (
         <p className="text-sm text-muted-foreground">{t.noMatch}</p>
       )}
 
-      {recs && visible.length > 0 && (
+      {recs && visible.fitting.length > 0 && (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {visible.map((r) => (
+          {visible.fitting.map((r) => (
             <ModelCard key={r.model.id} rec={r} profile={profile} onOpen={() => onOpenModel?.(r)} />
           ))}
         </div>
+      )}
+
+      {recs && visible.wontFit.length > 0 && (
+        <section aria-labelledby="wont-fit-heading" className="flex flex-col gap-3">
+          <h2 id="wont-fit-heading" className="font-display text-xl font-semibold">
+            {t.wontFitTitle}
+          </h2>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {visible.wontFit.map((r) => (
+              <ModelCard key={r.model.id} rec={r} profile={profile} onOpen={() => onOpenModel?.(r)} />
+            ))}
+          </div>
+        </section>
       )}
     </section>
   );

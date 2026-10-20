@@ -13,7 +13,7 @@ pub struct Recommendation {
     pub badges: Vec<String>,
 }
 
-/// Models that run at least "Good" come first, largest first; the rest follow, best fit first.
+/// Fitting models are ranked by estimated speed; non-fitting models are ranked by size.
 pub fn recommend(
     profile: &HardwareProfile,
     catalog: &[ModelSpec],
@@ -28,17 +28,13 @@ pub fn recommend(
     let compare_speed = |a: f64, b: f64| a.partial_cmp(&b).unwrap_or(Ordering::Equal);
 
     items.sort_by(|(model_a, estimate_a), (model_b, estimate_b)| {
-        let a_good = estimate_a.fit >= Fit::Good;
-        let b_good = estimate_b.fit >= Fit::Good;
-        b_good.cmp(&a_good).then_with(|| {
-            if a_good && b_good {
-                compare_speed(model_b.params_b, model_a.params_b)
-                    .then_with(|| compare_speed(estimate_b.decode_tps, estimate_a.decode_tps))
+        let a_wont_fit = estimate_a.fit == Fit::WontFit;
+        let b_wont_fit = estimate_b.fit == Fit::WontFit;
+        a_wont_fit.cmp(&b_wont_fit).then_with(|| {
+            if a_wont_fit {
+                model_a.file_size_bytes.cmp(&model_b.file_size_bytes)
             } else {
-                estimate_b
-                    .fit
-                    .cmp(&estimate_a.fit)
-                    .then_with(|| compare_speed(estimate_b.decode_tps, estimate_a.decode_tps))
+                compare_speed(estimate_b.decode_tps, estimate_a.decode_tps)
             }
         })
     });
@@ -52,7 +48,8 @@ pub fn recommend(
         .map(|(model, _)| model.id.clone());
     let best_id = items
         .iter()
-        .find(|(_, estimate)| estimate.fit >= Fit::Good)
+        .filter(|(_, estimate)| estimate.fit >= Fit::Good)
+        .max_by(|(model_a, _), (model_b, _)| compare_speed(model_a.params_b, model_b.params_b))
         .map(|(model, _)| model.id.clone());
 
     items

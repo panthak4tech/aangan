@@ -3,6 +3,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { MODELS, PRESETS } from "@/api/presets";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn() }));
+
+import { save } from "@tauri-apps/plugin-dialog";
 
 beforeEach(() => {
   Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
@@ -50,6 +53,62 @@ describe("browser API wrappers", () => {
 
     expect(recommendations).toHaveLength(MODELS.length);
     expect(recommendations[0].rank).toBe(1);
+  });
+
+  it("does nothing when the native save dialog is cancelled", async () => {
+    vi.mocked(save).mockResolvedValue(null);
+    const { saveHardwareReport } = await import("@/api/api");
+
+    await expect(saveHardwareReport("{}")).resolves.toBeNull();
+    expect(save).toHaveBeenCalledWith({
+      defaultPath: expect.stringMatching(/^aangan-hardware-report-\d{4}-\d{2}-\d{2}\.json$/),
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("saves the report to the selected path", async () => {
+    vi.mocked(save).mockResolvedValue("C:\\reports\\report.json");
+    vi.mocked(invoke).mockResolvedValue({ path: "C:\\reports\\report.json", bytes: 2 });
+    const { saveHardwareReport } = await import("@/api/api");
+
+    await expect(saveHardwareReport("{}")).resolves.toBe("C:\\reports\\report.json");
+    expect(invoke).toHaveBeenCalledWith("save_text_file", {
+      path: "C:\\reports\\report.json",
+      contents: "{}",
+    });
+  });
+
+  it("propagates native save failures", async () => {
+    vi.mocked(save).mockResolvedValue("C:\\reports\\report.json");
+    vi.mocked(invoke).mockRejectedValue(new Error("disk full"));
+    const { saveHardwareReport } = await import("@/api/api");
+
+    await expect(saveHardwareReport("{}")).rejects.toThrow("disk full");
+  });
+
+  it("copies report contents through the clipboard API", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const { copyHardwareReport } = await import("@/api/api");
+
+    await copyHardwareReport("{}");
+    expect(writeText).toHaveBeenCalledWith("{}");
+  });
+
+  it("delegates app-path lookup to the Tauri command", async () => {
+    const appPaths = {
+      data_dir: "C:\\Users\\partv\\AppData\\Local\\io.github.panthak4tech.aangan",
+      data_dir_exists: true,
+    };
+    vi.mocked(invoke).mockResolvedValue(appPaths);
+    const { getAppPaths } = await import("@/api/api");
+
+    await expect(getAppPaths()).resolves.toEqual(appPaths);
+    expect(invoke).toHaveBeenCalledWith("get_app_paths");
   });
 });
 

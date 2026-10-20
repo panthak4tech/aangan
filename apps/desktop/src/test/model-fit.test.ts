@@ -34,26 +34,50 @@ describe("model recommendation presentation", () => {
 
   it("filters by model name, family, or tag and preserves recommendation rank", () => {
     const reversed = [...recommendations].reverse();
-    expect(filterRecs(reversed, "  CODING ", true).map((item) => item.model.tags)).toEqual([
+    expect(filterRecs(reversed, "  CODING ", true).fitting.map((item) => item.model.tags)).toEqual([
       expect.arrayContaining(["coding"]),
     ]);
-    expect(filterRecs(reversed, "qwen2.5", true).map((item) => item.rank)).toEqual(
-      recommendations.map((item) => item.rank),
+    expect(filterRecs(reversed, "qwen2.5", true).fitting.map((item) => item.rank)).toEqual(
+      recommendations
+        .filter((item) => item.estimate.fit !== "wont_fit")
+        .map((item) => item.rank),
     );
   });
 
-  it("hides non-fitting models by default and reports when none fit comfortably", () => {
+  it("splits, sorts and counts non-fitting models while hiding them by default", () => {
     const onlySlow = recommendations.map((item) => ({
       ...item,
       estimate: { ...item.estimate, fit: "slow" as const },
     }));
     const mixed = [
-      { ...onlySlow[0], estimate: { ...onlySlow[0].estimate, fit: "wont_fit" as const } },
-      { ...onlySlow[1], estimate: { ...onlySlow[1].estimate, fit: "good" as const } },
+      {
+        ...onlySlow[0],
+        model: { ...onlySlow[0].model, file_size_bytes: 2_000 },
+        estimate: { ...onlySlow[0].estimate, fit: "wont_fit" as const },
+      },
+      {
+        ...onlySlow[1],
+        model: { ...onlySlow[1].model, file_size_bytes: 1_000 },
+        estimate: { ...onlySlow[1].estimate, fit: "wont_fit" as const },
+      },
+      {
+        ...onlySlow[2],
+        estimate: { ...onlySlow[2].estimate, fit: "good" as const, decode_tps: 10 },
+      },
+      {
+        ...onlySlow[3],
+        estimate: { ...onlySlow[3].estimate, fit: "slow" as const, decode_tps: 20 },
+      },
     ];
 
-    expect(filterRecs(mixed, "", false)).toHaveLength(1);
-    expect(filterRecs(mixed, "", true)).toHaveLength(2);
+    const hidden = filterRecs(mixed, "", false);
+    expect(hidden.fitting.map((item) => item.estimate.decode_tps)).toEqual([20, 10]);
+    expect(hidden.wontFit).toHaveLength(0);
+    expect(hidden.wontFitCount).toBe(2);
+
+    const shown = filterRecs(mixed, "", true);
+    expect(shown.wontFit.map((item) => item.model.file_size_bytes)).toEqual([1_000, 2_000]);
+    expect(shown.wontFitCount).toBe(2);
     expect(nothingFitsComfortably(onlySlow)).toBe(true);
     expect(nothingFitsComfortably(mixed)).toBe(false);
   });

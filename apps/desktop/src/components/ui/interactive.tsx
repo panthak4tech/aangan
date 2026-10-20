@@ -101,9 +101,10 @@ export interface ToastProps extends React.HTMLAttributes<HTMLDivElement> {
   title: string;
   description?: string;
   onDismiss?: () => void;
+  action?: { label: string; onClick: () => void };
 }
 /** Transient notification. Place inside a fixed corner container. */
-export const Toast = React.forwardRef<HTMLDivElement, ToastProps>(({ variant = "info", title, description, onDismiss, className, ...props }, ref) => {
+export const Toast = React.forwardRef<HTMLDivElement, ToastProps>(({ variant = "info", title, description, onDismiss, action, className, ...props }, ref) => {
   const Icon = toastIcons[variant];
   return (
     <div ref={ref} role="status" aria-live="polite" className={cn("flex w-full max-w-sm items-start gap-3 rounded-lg border bg-popover p-4 shadow-md animate-in fade-in slide-in-from-bottom-2", className)} {...props}>
@@ -111,6 +112,15 @@ export const Toast = React.forwardRef<HTMLDivElement, ToastProps>(({ variant = "
       <div className="flex-1 text-sm">
         <p className="font-medium">{title}</p>
         {description && <p className="text-muted-foreground">{description}</p>}
+        {action && (
+          <button
+            type="button"
+            onClick={action.onClick}
+            className="mt-2 rounded-sm text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {action.label}
+          </button>
+        )}
       </div>
       {onDismiss && (
         <button type="button" onClick={onDismiss} aria-label="Dismiss notification" className="rounded p-0.5 text-muted-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">

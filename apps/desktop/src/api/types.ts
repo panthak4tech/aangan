@@ -1,5 +1,10 @@
 export type GpuVendor = "nvidia" | "amd" | "intel" | "other";
 
+export interface AppPaths {
+  data_dir: string;
+  data_dir_exists: boolean;
+}
+
 export interface GpuInfo {
   name: string;
   vendor: GpuVendor;

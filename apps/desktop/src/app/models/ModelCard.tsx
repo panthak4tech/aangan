@@ -23,6 +23,10 @@ export function ModelCard({
   const { model, estimate } = rec;
   const wontFit = estimate.fit === "wont_fit";
   const avail = availableFor(profile, estimate);
+  const noFitReason = wontFit
+    ? estimate.reasons.find((reason) => reason.startsWith("Needs about "))
+      ?? t.wontFitReason(formatBytes(estimate.memory_required_bytes), formatBytes(avail.bytes))
+    : null;
   const licenseKind = model.license.osi_open ? "open_source" : "open_weight";
   const memRatio = Math.min(1, estimate.memory_required_bytes / avail.bytes);
 
@@ -76,6 +80,7 @@ export function ModelCard({
       </div>
 
       <div className="flex flex-col gap-1.5 text-xs">
+        {wontFit && <p className="text-sm text-muted-foreground">{noFitReason}</p>}
         <div className="flex justify-between gap-2">
           <span className="shrink-0 text-muted-foreground">{avail.onGpu ? t.onGpu : t.onRam}</span>
           <span className="text-right tabular-nums text-card-foreground">
@@ -84,7 +89,7 @@ export function ModelCard({
         </div>
         <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
           <div
-            className={cn("h-full rounded-full", wontFit ? "bg-destructive" : "bg-primary")}
+            className={cn("h-full rounded-full", wontFit ? "bg-fit-wont-fit" : "bg-primary")}
             style={{ width: `${memRatio * 100}%` }}
           />
         </div>
