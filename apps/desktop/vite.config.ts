@@ -44,6 +44,12 @@ export default defineConfig(() => ({
     coverage: {
       provider: "v8" as const,
       reporter: ["text-summary", "lcov", "cobertura"],
+      thresholds: {
+        lines: 70,
+        statements: 70,
+        functions: 65,
+        branches: 60,
+      },
       include: ["src/**/*.{ts,tsx}"],
       exclude: [
         ...configDefaults.exclude,
