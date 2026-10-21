@@ -3,7 +3,13 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { getDevPreset, getFailScans } from "./devPreset";
 import { rankModels } from "./estimate";
 import { APP_INFO, MODELS, PRESETS } from "./presets";
-import type { AppPaths, HardwareProfile, Recommendation } from "./types";
+import type {
+  AppPaths,
+  CatalogInfo,
+  CatalogRefreshResult,
+  HardwareProfile,
+  Recommendation,
+} from "./types";
 
 export { APP_INFO };
 
@@ -48,6 +54,51 @@ export async function recommendModels(
 
 export async function getAppPaths(): Promise<AppPaths> {
   return invoke<AppPaths>("get_app_paths");
+}
+
+export async function getCatalogInfo(): Promise<CatalogInfo> {
+  if (!inTauri) {
+    const stored = window.localStorage.getItem("aangan.catalog.subscribedFamilies");
+    const families = [...new Set(MODELS.map((model) => model.family))];
+    const selected = stored ? JSON.parse(stored) as string[] : families;
+    return {
+      generated_at: "2026-10-21T13:30:00Z",
+      families,
+      subscribed_families: selected.filter((family) => families.includes(family)),
+      refresh_catalog_always_allowed:
+        window.localStorage.getItem("aangan.catalog.refreshAlwaysAllowed") === "true",
+      warning: null,
+    };
+  }
+  return invoke<CatalogInfo>("get_catalog_info");
+}
+
+export async function setSubscribedFamilies(families: string[]): Promise<CatalogInfo> {
+  if (!inTauri) {
+    window.localStorage.setItem("aangan.catalog.subscribedFamilies", JSON.stringify(families));
+    return getCatalogInfo();
+  }
+  return invoke<CatalogInfo>("set_subscribed_families", { families });
+}
+
+export async function setCatalogRefreshConsent(alwaysAllowed: boolean): Promise<void> {
+  if (!inTauri) {
+    window.localStorage.setItem("aangan.catalog.refreshAlwaysAllowed", String(alwaysAllowed));
+    return;
+  }
+  return invoke<void>("set_catalog_refresh_consent", { alwaysAllowed });
+}
+
+export async function resetCatalog(): Promise<CatalogInfo> {
+  if (!inTauri) return getCatalogInfo();
+  return invoke<CatalogInfo>("reset_catalog");
+}
+
+export async function refreshCatalog(consentOnce: boolean): Promise<CatalogRefreshResult> {
+  if (!inTauri) {
+    throw new Error("Catalog refresh is available only in the desktop app.");
+  }
+  return invoke<CatalogRefreshResult>("refresh_catalog", { consentOnce });
 }
 
 export async function saveHardwareReport(

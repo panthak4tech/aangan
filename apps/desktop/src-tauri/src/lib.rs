@@ -1,12 +1,15 @@
 use aangan_types::HardwareProfile;
-use fitcalc::{Recommendation, Tunables, builtin_catalog, recommend};
+use fitcalc::{Recommendation, Tunables, recommend};
 use hwprobe::{ProbeOptions, probe};
 use serde::Serialize;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tauri::Manager;
 
+mod catalog;
+
 const MAX_TEXT_FILE_BYTES: usize = 5 * 1024 * 1024;
+const BUNDLED_CATALOG: &str = include_str!("../../../../catalog/models.v1.json");
 
 #[derive(Serialize)]
 struct SavedFile {
@@ -32,13 +35,18 @@ fn app_paths_for_existing_dir(data_dir: &Path) -> Result<AppPaths, String> {
 
 #[tauri::command]
 fn get_app_paths(app: tauri::AppHandle) -> Result<AppPaths, String> {
+    let data_dir = app_data_dir(&app)?;
+    app_paths_for_existing_dir(&data_dir)
+}
+
+fn app_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let data_dir = app
         .path()
         .app_local_data_dir()
         .map_err(|error| error.to_string())?;
     std::fs::create_dir_all(&data_dir)
         .map_err(|error| format!("could not create the application data directory: {error}"))?;
-    app_paths_for_existing_dir(&data_dir)
+    Ok(data_dir)
 }
 
 #[tauri::command]
@@ -49,8 +57,49 @@ async fn scan_hardware(measure_bandwidth: bool) -> Result<HardwareProfile, Strin
 }
 
 #[tauri::command]
-fn recommend_models(profile: HardwareProfile, context: u32) -> Vec<Recommendation> {
-    recommend(&profile, &builtin_catalog(), context, &Tunables::default())
+fn recommend_models(
+    app: tauri::AppHandle,
+    profile: HardwareProfile,
+    context: u32,
+) -> Result<Vec<Recommendation>, String> {
+    let loaded = catalog::load_catalog(&app_data_dir(&app)?, BUNDLED_CATALOG)?;
+    Ok(recommend(
+        &profile,
+        &catalog::model_specs(&loaded.catalog),
+        context,
+        &Tunables::default(),
+    ))
+}
+
+#[tauri::command]
+fn get_catalog_info(app: tauri::AppHandle) -> Result<catalog::CatalogInfo, String> {
+    catalog::catalog_info(&app_data_dir(&app)?, BUNDLED_CATALOG)
+}
+
+#[tauri::command]
+fn set_subscribed_families(
+    app: tauri::AppHandle,
+    families: Vec<String>,
+) -> Result<catalog::CatalogInfo, String> {
+    catalog::set_subscribed_families(&app_data_dir(&app)?, BUNDLED_CATALOG, families)
+}
+
+#[tauri::command]
+fn set_catalog_refresh_consent(app: tauri::AppHandle, always_allowed: bool) -> Result<(), String> {
+    catalog::set_refresh_consent(&app_data_dir(&app)?, always_allowed)
+}
+
+#[tauri::command]
+fn reset_catalog(app: tauri::AppHandle) -> Result<catalog::CatalogInfo, String> {
+    catalog::reset_catalog(&app_data_dir(&app)?, BUNDLED_CATALOG)
+}
+
+#[tauri::command]
+async fn refresh_catalog(
+    app: tauri::AppHandle,
+    consent_once: bool,
+) -> Result<catalog::RefreshResult, String> {
+    catalog::refresh_catalog(&app_data_dir(&app)?, BUNDLED_CATALOG, consent_once).await
 }
 
 fn validate_save_request(
@@ -118,6 +167,11 @@ pub fn run() -> Result<(), tauri::Error> {
         .invoke_handler(tauri::generate_handler![
             scan_hardware,
             recommend_models,
+            get_catalog_info,
+            set_subscribed_families,
+            set_catalog_refresh_consent,
+            reset_catalog,
+            refresh_catalog,
             save_text_file,
             get_app_paths
         ])
