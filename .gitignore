@@ -2,6 +2,7 @@
 node_modules
 dist
 coverage/
+apps/desktop/src-tauri/binaries/
 *.log
 .env
 .DS_Store

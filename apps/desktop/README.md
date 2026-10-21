@@ -7,6 +7,9 @@ The UI uses a light green semantic palette defined in `src/styles/tokens.css`;
 dark mode is not implemented yet.
 The production WebView CSP allows local assets and Tauri IPC only. The NSIS
 installer targets the current user and does not require administrator access.
+The installer bundles the `aangan` CLI and offers an unchecked option to add
+the install directory to the current user's PATH. That PATH entry is removed
+on uninstall only if the installer added it.
 The custom NSIS template ignores unrelated processes reported by Windows
 Restart Manager. If shutdown fails with error 350 while Aangan is listed, it
 terminates only Aangan's reported process IDs, verifies they have exited, and
@@ -32,6 +35,10 @@ From this directory:
 npm install
 npm run tauri dev
 ```
+
+Build the Windows installer with `npm run tauri build`. The bundle build stages
+the CLI as a Tauri sidecar before compiling the frontend and packaging the
+installer.
 
 To preview the UI in a regular browser, run `npm run dev`. This uses mock data;
 the development header lets you switch hardware presets and exercise scan
