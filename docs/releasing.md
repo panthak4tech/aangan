@@ -16,6 +16,10 @@ versioned independently from the desktop app.
   unselected; uninstall must remove only an installer-managed PATH entry.
 - Review the false-positive submission flow and confirm no hardware profile is
   uploaded.
+- Review the open [RUSTSEC-2024-0429](https://rustsec.org/advisories/RUSTSEC-2024-0429.html)
+  alert for `glib` and record its disposition. The current dependency tree pulls
+  `glib` through the GTK backend on Linux; it is not part of the Windows x64
+  release target.
 - Configure the GitHub `release` environment with a required reviewer before
   creating the release tag.
 
