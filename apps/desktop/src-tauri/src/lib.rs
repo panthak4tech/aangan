@@ -310,26 +310,36 @@ mod tests {
             installer
                 .matches(r#"!insertmacro SetShortcutIcon "#)
                 .count(),
-            3,
-            "Start Menu and desktop shortcuts must all refresh their icon"
+            6,
+            "new and migrated Start Menu and desktop shortcuts must set their icon"
         );
-        assert!(
-            installer.contains(
-                r#"CreateShortcut "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\${MAINBINARYNAME}.exe""#
-            ),
-            "new Start Menu shortcuts must use the desktop executable icon"
+        assert_shortcut_sets_icon_after_create(
+            installer,
+            r#"CreateShortcut "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\${MAINBINARYNAME}.exe""#,
+            r#"!insertmacro SetShortcutIcon "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe""#,
         );
-        assert!(
-            installer.contains(
-                r#"CreateShortcut "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\${MAINBINARYNAME}.exe""#
-            ),
-            "new Start Menu shortcuts must use the desktop executable icon"
+        assert_shortcut_sets_icon_after_create(
+            installer,
+            r#"CreateShortcut "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\${MAINBINARYNAME}.exe""#,
+            r#"!insertmacro SetShortcutIcon "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe""#,
         );
+        assert_shortcut_sets_icon_after_create(
+            installer,
+            r#"CreateShortcut "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\${MAINBINARYNAME}.exe""#,
+            r#"!insertmacro SetShortcutIcon "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe""#,
+        );
+    }
+
+    fn assert_shortcut_sets_icon_after_create(installer: &str, creation: &str, icon: &str) {
+        let creation_index = installer.find(creation).expect("new shortcut is created");
+        let remaining = &installer[creation_index + creation.len()..];
+        let icon_index = remaining.find(icon).expect("shortcut icon is set");
+        let app_user_model_id_index = remaining
+            .find("!insertmacro SetLnkAppUserModelId")
+            .expect("shortcut AppUserModelId is set");
         assert!(
-            installer.contains(
-                r#"CreateShortcut "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\${MAINBINARYNAME}.exe""#
-            ),
-            "new desktop shortcuts must use the desktop executable icon"
+            icon_index < app_user_model_id_index,
+            "shortcut icon location must be persisted before its AppUserModelId"
         );
     }
 
