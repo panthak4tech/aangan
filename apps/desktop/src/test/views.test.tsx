@@ -113,6 +113,7 @@ describe("ModelsView", () => {
     );
 
     expect(await screen.findByText("Qwen2.5 7B Instruct")).toBeInTheDocument();
+    expect(screen.getByText(en.views.models.catalogSource)).toBeInTheDocument();
     fireEvent.change(screen.getByRole("textbox", { name: en.views.models.search }), {
       target: { value: "coding" },
     });
@@ -160,7 +161,7 @@ describe("ModelsView", () => {
     expect(toggle).toHaveAttribute("aria-checked", "true");
     expect(window.localStorage.getItem("aangan.models.showWontFit")).toBe("true");
     expect(screen.getByRole("heading", { name: en.views.models.wontFitTitle })).toBeInTheDocument();
-    expect(screen.getByText(/Needs .* — this PC has .* system memory available\./)).toBeInTheDocument();
+    expect(screen.getByText(/Needs .* — this PC's estimated usable system memory budget is .*\./)).toBeInTheDocument();
 
     unmount();
     render(
@@ -435,7 +436,7 @@ describe("ScanView", () => {
 
 describe("SettingsView and FirstRunWizard", () => {
   it("renders the real data path and supports open and copy actions", async () => {
-    const dataDir = "C:\\Users\\partv\\AppData\\Local\\io.github.panthak4tech.aangan";
+    const dataDir = "C:\\Users\\partv\\AppData\\Local\\Aangan";
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
@@ -446,6 +447,7 @@ describe("SettingsView and FirstRunWizard", () => {
 
     expect(await screen.findByText(dataDir)).toBeInTheDocument();
     expect(screen.getByText(en.views.settings.privacy.title)).toBeInTheDocument();
+    expect(screen.getByText(en.views.settings.catalog.source)).toBeInTheDocument();
     expect(screen.getByText(en.views.settings.language.options.hi)).toBeInTheDocument();
     expect(screen.getByText(en.views.settings.about.notices)).toBeInTheDocument();
     expect(screen.getByText(en.views.settings.data.hint)).toBeInTheDocument();

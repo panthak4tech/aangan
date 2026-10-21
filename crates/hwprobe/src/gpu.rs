@@ -1,6 +1,7 @@
 use aangan_types::{GpuInfo, GpuVendor};
 
 const SOFTWARE_ADAPTER_NAME: &str = "microsoft basic render driver";
+const INTEL_INTEGRATED_DEDICATED_MEMORY_LIMIT: u64 = 1536 * 1024 * 1024;
 // Known integrated GPU PCI IDs; add entries when supporting new adapter families.
 const AMD_INTEGRATED_DEVICE_IDS: &[u32] = &[
     0x15BF, 0x15D8, 0x15DD, 0x15E7, 0x1636, 0x1638, 0x164C, 0x164E, 0x1681,
@@ -38,22 +39,34 @@ fn classify_adapters(adapters: Vec<AdapterCandidate>) -> Vec<GpuInfo> {
                 return None;
             }
 
-            adapter.info.is_integrated =
-                is_integrated_adapter(adapter.info.vendor, adapter.device_id, adapter.nvml_present);
+            adapter.info.is_integrated = is_integrated_adapter(
+                adapter.info.vendor,
+                adapter.device_id,
+                adapter.info.dedicated_vram_bytes,
+                adapter.nvml_present,
+            );
             Some(adapter.info)
         })
         .collect()
 }
 
 /// Returns true only for known integrated PCI device IDs; unknown IDs default to discrete.
-fn is_integrated_adapter(vendor: GpuVendor, device_id: u32, nvml_present: bool) -> bool {
+fn is_integrated_adapter(
+    vendor: GpuVendor,
+    device_id: u32,
+    dedicated_vram_bytes: u64,
+    nvml_present: bool,
+) -> bool {
     if nvml_present {
         return false;
     }
 
     match vendor {
         GpuVendor::Amd => AMD_INTEGRATED_DEVICE_IDS.contains(&device_id),
-        GpuVendor::Intel => INTEL_INTEGRATED_DEVICE_IDS.contains(&device_id),
+        GpuVendor::Intel => {
+            INTEL_INTEGRATED_DEVICE_IDS.contains(&device_id)
+                || dedicated_vram_bytes < INTEL_INTEGRATED_DEDICATED_MEMORY_LIMIT
+        }
         GpuVendor::Nvidia | GpuVendor::Other => false,
     }
 }
@@ -282,6 +295,36 @@ mod tests {
 
         assert_eq!(gpus.len(), 1);
         assert!(gpus[0].is_integrated);
+    }
+
+    #[test]
+    fn intel_integrated_adapter_with_unlisted_id_is_classified_by_small_memory_carveout() {
+        let gpus = classify_adapters(vec![candidate(
+            "Intel(R) UHD Graphics",
+            GpuVendor::Intel,
+            0xA788,
+            128 * 1024 * 1024,
+            false,
+            false,
+        )]);
+
+        assert_eq!(gpus.len(), 1);
+        assert!(gpus[0].is_integrated);
+    }
+
+    #[test]
+    fn intel_arc_with_dedicated_memory_is_classified_as_discrete() {
+        let gpus = classify_adapters(vec![candidate(
+            "Intel Arc A770",
+            GpuVendor::Intel,
+            0x56A0,
+            8 * 1024 * 1024 * 1024,
+            false,
+            false,
+        )]);
+
+        assert_eq!(gpus.len(), 1);
+        assert!(!gpus[0].is_integrated);
     }
 
     #[test]

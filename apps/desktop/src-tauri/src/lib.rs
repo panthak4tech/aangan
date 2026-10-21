@@ -40,12 +40,22 @@ fn get_app_paths(app: tauri::AppHandle) -> Result<AppPaths, String> {
 }
 
 fn app_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let data_dir = app
+    let local_data_dir = app
+        .path()
+        .local_data_dir()
+        .map_err(|error| error.to_string())?;
+    let legacy_data_dir = app
         .path()
         .app_local_data_dir()
         .map_err(|error| error.to_string())?;
+    app_data_dir_at(&local_data_dir, &legacy_data_dir)
+}
+
+fn app_data_dir_at(local_data_dir: &Path, legacy_data_dir: &Path) -> Result<PathBuf, String> {
+    let data_dir = local_data_dir.join("Aangan");
     std::fs::create_dir_all(&data_dir)
         .map_err(|error| format!("could not create the application data directory: {error}"))?;
+    catalog::migrate_legacy_data(legacy_data_dir, &data_dir)?;
     Ok(data_dir)
 }
 
@@ -176,8 +186,7 @@ pub fn run() -> Result<(), tauri::Error> {
             get_app_paths
         ])
         .setup(|app| {
-            let data_dir = app.path().app_local_data_dir()?;
-            std::fs::create_dir_all(data_dir)?;
+            app_data_dir(app.handle()).map_err(std::io::Error::other)?;
             #[cfg(windows)]
             {
                 let icon = tauri::image::Image::from_app_icon_resource(128)?;
@@ -199,16 +208,126 @@ pub fn run() -> Result<(), tauri::Error> {
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_TEXT_FILE_BYTES, app_paths_for_existing_dir, save_text_file_blocking,
+        MAX_TEXT_FILE_BYTES, app_data_dir_at, app_paths_for_existing_dir, save_text_file_blocking,
         validate_save_request,
     };
     use std::path::Path;
+
+    #[test]
+    fn desktop_and_cli_binary_names_do_not_collide_on_windows() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("valid Tauri config");
+        let desktop_name = config["mainBinaryName"]
+            .as_str()
+            .expect("configured desktop binary name");
+        let external_binaries = config["bundle"]["externalBin"]
+            .as_array()
+            .expect("configured external binaries");
+        assert!(
+            config["bundle"]["icon"]
+                .as_array()
+                .is_some_and(|icons| icons.iter().any(|icon| icon == "icons/icon.ico")),
+            "the desktop executable must include the application icon resource"
+        );
+
+        assert!(!external_binaries.is_empty());
+        for external_binary in external_binaries {
+            let cli_name = external_binary
+                .as_str()
+                .and_then(|path| Path::new(path).file_name())
+                .and_then(|name| name.to_str())
+                .expect("external binary path");
+            assert!(
+                !desktop_name.eq_ignore_ascii_case(cli_name),
+                "desktop binary {desktop_name:?} conflicts with bundled binary {cli_name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn installer_removes_legacy_desktop_name_before_copying_cli() {
+        let installer = include_str!("../installer.nsi");
+        let legacy_removal = installer
+            .find(r#"Delete /REBOOTOK "$INSTDIR\$OldMainBinaryName""#)
+            .expect("legacy desktop binary is removed");
+        let cli_copy = installer
+            .find("; The CLI sidecar is installed as aangan.exe by Tauri.")
+            .expect("CLI sidecar copy section exists");
+        assert!(
+            legacy_removal < cli_copy,
+            "legacy desktop binary cleanup must happen before the CLI sidecar is installed"
+        );
+    }
+
+    #[test]
+    fn installer_shortcuts_use_the_desktop_executable_icon() {
+        let installer = include_str!("../installer.nsi");
+        assert!(
+            installer.contains(r#"${IShellLink::SetIconLocation} $0 '(w "${icon}", i 0)'"#),
+            "migrated shortcuts must explicitly set their icon location"
+        );
+        assert_eq!(
+            installer
+                .matches(r#"!insertmacro SetShortcutIcon "#)
+                .count(),
+            3,
+            "Start Menu and desktop shortcuts must all refresh their icon"
+        );
+        assert!(
+            installer.contains(
+                r#"CreateShortcut "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\${MAINBINARYNAME}.exe""#
+            ),
+            "new Start Menu shortcuts must use the desktop executable icon"
+        );
+        assert!(
+            installer.contains(
+                r#"CreateShortcut "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\${MAINBINARYNAME}.exe""#
+            ),
+            "new Start Menu shortcuts must use the desktop executable icon"
+        );
+        assert!(
+            installer.contains(
+                r#"CreateShortcut "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\${MAINBINARYNAME}.exe""#
+            ),
+            "new desktop shortcuts must use the desktop executable icon"
+        );
+    }
 
     #[test]
     fn save_validation_rejects_relative_paths() {
         let error = validate_save_request(Path::new("report.json"), "{}", true)
             .expect_err("relative path should be rejected");
         assert!(error.contains("absolute"));
+    }
+
+    #[test]
+    fn uses_aangan_folder_and_preserves_legacy_catalog_files() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let local_data_dir = directory.path().join("Local");
+        let legacy_data_dir = local_data_dir.join("io.github.panthak4tech.aangan");
+        std::fs::create_dir_all(&legacy_data_dir).expect("legacy data directory");
+        std::fs::write(
+            legacy_data_dir.join("catalog-cache.v1.json"),
+            "cached catalog",
+        )
+        .expect("legacy catalog cache");
+        std::fs::write(legacy_data_dir.join("settings.json"), "catalog settings")
+            .expect("legacy settings");
+
+        let data_dir = app_data_dir_at(&local_data_dir, &legacy_data_dir)
+            .expect("new application data directory");
+
+        assert_eq!(data_dir, local_data_dir.join("Aangan"));
+        assert_eq!(
+            std::fs::read_to_string(data_dir.join("catalog-cache.v1.json"))
+                .expect("migrated catalog cache"),
+            "cached catalog"
+        );
+        assert_eq!(
+            std::fs::read_to_string(data_dir.join("settings.json")).expect("migrated settings"),
+            "catalog settings"
+        );
+        assert!(legacy_data_dir.join("catalog-cache.v1.json").exists());
     }
 
     #[test]
