@@ -12,6 +12,7 @@ const MAX_CATALOG_BYTES: usize = 5 * 1024 * 1024;
 const MAX_MODELS: usize = 1000;
 const CATALOG_FILE: &str = "catalog-cache.v1.json";
 const SETTINGS_FILE: &str = "settings.json";
+const LEGACY_MIGRATION_FILE: &str = ".legacy-data-migrated";
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -98,6 +99,28 @@ pub struct RefreshResult {
 
 pub fn cache_path(data_dir: &Path) -> PathBuf {
     data_dir.join(CATALOG_FILE)
+}
+
+pub fn migrate_legacy_data(legacy_dir: &Path, data_dir: &Path) -> Result<(), String> {
+    let migration_marker = data_dir.join(LEGACY_MIGRATION_FILE);
+    if legacy_dir == data_dir || migration_marker.exists() {
+        return Ok(());
+    }
+    for file in [CATALOG_FILE, SETTINGS_FILE] {
+        let source = legacy_dir.join(file);
+        let destination = data_dir.join(file);
+        if source.is_file() && !destination.exists() {
+            fs::copy(&source, &destination).map_err(|error| {
+                format!(
+                    "could not preserve existing catalog data from {}: {error}",
+                    source.display()
+                )
+            })?;
+        }
+    }
+    fs::write(&migration_marker, b"1")
+        .map_err(|error| format!("could not record catalog data migration: {error}"))?;
+    Ok(())
 }
 
 fn settings_path(data_dir: &Path) -> PathBuf {
@@ -692,6 +715,33 @@ mod tests {
         assert!(!specs[2].license.osi_open);
         assert_eq!(specs[3].tags, ["chat", "coding"]);
         assert_eq!(specs[6].file_size_bytes, 47_415_715_488);
+    }
+
+    #[test]
+    fn migrates_legacy_catalog_files_without_overwriting_new_data() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let legacy = directory.path().join("legacy");
+        let current = directory.path().join("Aangan");
+        fs::create_dir_all(&legacy).expect("legacy directory");
+        fs::create_dir_all(&current).expect("current directory");
+        fs::write(legacy.join(CATALOG_FILE), "old cache").expect("legacy cache");
+        fs::write(legacy.join(SETTINGS_FILE), "old settings").expect("legacy settings");
+        fs::write(current.join(SETTINGS_FILE), "new settings").expect("current settings");
+
+        migrate_legacy_data(&legacy, &current).expect("migration succeeds");
+
+        assert_eq!(
+            fs::read_to_string(current.join(CATALOG_FILE)).expect("migrated cache"),
+            "old cache"
+        );
+        assert_eq!(
+            fs::read_to_string(current.join(SETTINGS_FILE)).expect("current settings"),
+            "new settings"
+        );
+        assert!(legacy.join(CATALOG_FILE).exists());
+        fs::remove_file(current.join(CATALOG_FILE)).expect("remove migrated cache");
+        migrate_legacy_data(&legacy, &current).expect("migration does not repeat");
+        assert!(!current.join(CATALOG_FILE).exists());
     }
 
     #[test]

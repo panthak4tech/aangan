@@ -1,7 +1,8 @@
 import { Database, FolderOpen, Info, Languages, ShieldCheck } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { Suspense, lazy, useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { openPath } from "@tauri-apps/plugin-opener";
+import { NoticesDialog } from "@/app/notices/NoticesDialog";
 import {
   APP_INFO,
   getAppPaths,
@@ -21,12 +22,6 @@ import { Skeleton } from "@/components/primitives/skeleton";
 import { useToast } from "@/components/ui/toast-provider";
 import { cn } from "@/lib/utils";
 import { en } from "@/i18n/en";
-
-const NoticesDialog = lazy(() =>
-  import("@/app/notices/NoticesDialog").then(({ NoticesDialog: Component }) => ({
-    default: Component,
-  })),
-);
 
 function SettingsSection({
   icon: Icon,
@@ -194,6 +189,7 @@ export function SettingsView() {
 
       <SettingsSection icon={Database} title={t.catalog.title}>
         <p className="text-sm text-muted-foreground">{t.catalog.body}</p>
+        <p className="text-sm text-muted-foreground">{t.catalog.source}</p>
         {catalogLoading ? (
           <Skeleton role="status" aria-label={t.catalog.loading} className="h-8 w-full" />
         ) : catalogError ? (
@@ -265,16 +261,13 @@ export function SettingsView() {
         <button
           type="button"
           className="w-fit text-sm font-medium text-primary underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          aria-haspopup="dialog"
           onClick={() => setNoticesOpen(true)}
         >
           {t.about.notices}
         </button>
       </SettingsSection>
-      {noticesOpen && (
-        <Suspense fallback={<p role="status">{t.about.loadingNotices}</p>}>
-          <NoticesDialog open onOpenChange={setNoticesOpen} />
-        </Suspense>
-      )}
+      <NoticesDialog open={noticesOpen} onOpenChange={setNoticesOpen} />
     </section>
   );
 }

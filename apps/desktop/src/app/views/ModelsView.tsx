@@ -154,9 +154,12 @@ export function ModelsView({ profile, onOpenModel }: Props) {
       {refreshNotice && <p role="status" className="text-sm text-muted-foreground">{refreshNotice}</p>}
       {refreshError && <p role="alert" className="text-sm text-destructive">{refreshError}</p>}
       {catalogInfo && (
-        <p className="text-xs text-muted-foreground">
-          {t.catalogUpdated(new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(catalogInfo.generated_at)))}
-        </p>
+        <>
+          <p className="text-xs text-muted-foreground">
+            {t.catalogUpdated(new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(catalogInfo.generated_at)))}
+          </p>
+          <p className="text-xs text-muted-foreground">{t.catalogSource}</p>
+        </>
       )}
 
       <div className="flex flex-wrap items-end gap-4">

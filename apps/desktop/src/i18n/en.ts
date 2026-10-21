@@ -80,6 +80,8 @@ export const en = {
       refreshConsentTitle: "Refresh the model catalog?",
       refreshConsentBody:
         "Aangan will contact raw.githubusercontent.com to download the public model catalog. No information about this PC is sent.",
+      catalogSource:
+        "Refresh checks Aangan's curated catalog on GitHub; it does not search Hugging Face or download model weights. The bundled catalog currently has seven Qwen2.5 sizes.",
       refreshOnce: "Refresh once",
       alwaysAllowRefresh: "Always allow",
       cancelRefresh: "Cancel",
@@ -98,12 +100,12 @@ export const en = {
       everyModelFits: "Every model in the catalog fits this PC",
       wontFitTitle: "Won't fit on this PC",
       wontFitReason: (need: string, available: string) =>
-        `Needs ${need} — this PC has ${available} system memory available.`,
+        `Needs ${need} — this PC's estimated usable system memory budget is ${available}.`,
       noMatch: "No models match your search.",
       loadErrorTitle: "Couldn't calculate recommendations",
       loadError: "Something went wrong while ranking models for this PC. Try again, or change the context length.",
       retry: "Try again",
-      memoryNeeded: (need: string, avail: string) => `${need} needed · ${avail} available`,
+      memoryNeeded: (need: string, avail: string) => `${need} needed · ${avail} usable budget`,
       onGpu: "Graphics memory",
       onRam: "System memory",
       params: (b: number) => `${b}B parameters`,
@@ -135,6 +137,7 @@ export const en = {
       catalog: {
         title: "Model catalog",
         body: "Recommendations use a bundled catalog by default. Choose which model families to include. You can reset any downloaded catalog to the bundled version.",
+        source: "Models → Refresh catalog checks Aangan's curated catalog on GitHub. It does not search Hugging Face or download model weights. The bundled catalog currently has seven Qwen2.5 sizes.",
         loading: "Loading catalog settings",
         loadFailed: (reason: string) => `Couldn't read catalog settings: ${reason}`,
         updated: (date: string) => `Catalog generated ${date}`,
@@ -194,15 +197,15 @@ export const en = {
     weights: "Model weights",
     context: "Context memory",
     overhead: "Overhead",
-    available: "Available",
-    total: (need: string, avail: string) => `${need} needed · ${avail} available`,
+    available: "Usable budget",
+    total: (need: string, avail: string) => `${need} needed · ${avail} usable budget`,
     howTitle: "How it will run",
     placement: {
       full_gpu: "Entirely on your graphics card.",
       partial_gpu: (n: number, m: number) =>
         `${n} of ${m} layers on your graphics card, the rest on the processor.`,
       cpu_only: "On the processor only, using system memory.",
-      no_fit: "It won't fit in this PC's free memory.",
+      no_fit: "It won't fit within this PC's estimated usable memory budget.",
     },
     reasonsTitle: "Why",
     speedTitle: "Speed",
@@ -223,7 +226,7 @@ export const en = {
     reason_full_gpu: "Fits entirely in graphics memory.",
     reason_partial_gpu: "Partly runs on the graphics card, the rest on the processor.",
     reason_cpu_only: "Runs on the processor using system memory.",
-    reason_no_fit: "Needs more memory than this PC has free.",
+    reason_no_fit: "Needs more memory than this PC's estimated usable memory budget.",
     reason_bandwidth_assumed: "Memory speed was not measured, so a typical value was assumed.",
   },
   wizard: {

@@ -16,19 +16,48 @@ describe("model recommendation presentation", () => {
     });
   });
 
-  it("uses dedicated GPU memory only for GPU placements", () => {
+  it("uses the estimator's usable memory budgets instead of momentary free memory", () => {
     const recommendation = recommendations[0];
     expect(availableFor(PRESETS.desktop_3060, recommendation.estimate)).toEqual({
-      bytes: PRESETS.desktop_3060.gpus[0].dedicated_vram_bytes,
+      bytes: Math.floor(PRESETS.desktop_3060.gpus[0].dedicated_vram_bytes * 0.9),
       onGpu: true,
     });
 
     const cpuProfile = structuredClone(PRESETS.laptop16_igpu);
     cpuProfile.gpus.push({ ...PRESETS.desktop_3060.gpus[0], is_integrated: true });
+    cpuProfile.memory.available_bytes = 100_000_000;
     const cpuEstimate = { ...recommendation.estimate, placement: { kind: "cpu_only" as const } };
     expect(availableFor(cpuProfile, cpuEstimate)).toEqual({
-      bytes: cpuProfile.memory.available_bytes,
+      bytes: Math.floor(cpuProfile.memory.total_bytes * 0.7),
       onGpu: false,
+    });
+  });
+
+  it("uses the largest discrete GPU when an integrated adapter appears first", () => {
+    const profile = structuredClone(PRESETS.laptop16_igpu);
+    profile.gpus[0] = {
+      ...profile.gpus[0],
+      name: "Intel(R) UHD Graphics",
+      dedicated_vram_bytes: 0.1 * 1024 ** 3,
+      is_integrated: false,
+    };
+    profile.gpus.push({
+      name: "NVIDIA GeForce RTX 4070 Laptop GPU",
+      vendor: "nvidia",
+      dedicated_vram_bytes: 8 * 1024 ** 3,
+      shared_memory_bytes: 8 * 1024 ** 3,
+      is_integrated: false,
+      bandwidth_gbps: 256,
+      bandwidth_source: "estimated",
+    });
+    const gpuEstimate = {
+      ...recommendations[0].estimate,
+      placement: { kind: "partial_gpu" as const, gpu_layers: 24, total_layers: 48 },
+    };
+
+    expect(availableFor(profile, gpuEstimate)).toEqual({
+      bytes: Math.floor(8 * 1024 ** 3 * 0.9),
+      onGpu: true,
     });
   });
 
