@@ -3,7 +3,12 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { javascriptNotices, mergeNotices, sortNotices } from "./notices-data.mjs";
+import {
+  javascriptNotices,
+  mergeNotices,
+  normalizeLicenseText,
+  sortNotices,
+} from "./notices-data.mjs";
 
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 const desktopDirectory = path.join(repositoryRoot, "apps", "desktop");
@@ -59,7 +64,9 @@ function runLicenseChecker() {
 }
 
 function rustNotices(cargoData) {
-  const licenseTexts = new Map(cargoData.licenses.map(({ id, text }) => [id, text.trim()]));
+  const licenseTexts = new Map(
+    cargoData.licenses.map(({ id, text }) => [id, normalizeLicenseText(text)]),
+  );
 
   return cargoData.crates.map(({ package: crate, license }) => {
     const expression = license ?? "";
@@ -110,7 +117,7 @@ try {
     version: aanganPackage.version,
     license: "MIT",
     repository: "https://github.com/panthak4tech/aangan",
-    text: readFileSync(path.join(repositoryRoot, "LICENSE"), "utf8").trim(),
+    text: normalizeLicenseText(readFileSync(path.join(repositoryRoot, "LICENSE"), "utf8")),
   };
   const notices = sortNotices(
     mergeNotices(

@@ -62,6 +62,7 @@ export function ModelCard({
             {en.badges.fastest}
           </Badge>
         )}
+        {model.tags.includes("gated") && <Badge variant="outline">{t.gated}</Badge>}
       </div>
 
       <div className="flex flex-col gap-0.5">

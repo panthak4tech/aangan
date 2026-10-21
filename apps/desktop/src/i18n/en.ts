@@ -2,7 +2,7 @@ export const en = {
   app: {
     name: "Aangan",
     tagline: "Open AI models that fit your PC",
-    metaDescription: "Aangan checks your PC's hardware and recommends open AI models that will run well on it, fully offline.",
+    metaDescription: "Aangan checks your PC's hardware and recommends open AI models offline, with optional catalog refresh.",
   },
   nav: { scan: "Scan", models: "Models", settings: "Settings", label: "Main navigation" },
   views: {
@@ -76,6 +76,20 @@ export const en = {
       title: "Models that fit this PC",
       empty: "Run a scan first. Recommendations will appear here.",
       subtitle: "Ranked for your hardware. Speeds are estimates.",
+      refreshCatalog: "Refresh catalog",
+      refreshConsentTitle: "Refresh the model catalog?",
+      refreshConsentBody:
+        "Aangan will contact raw.githubusercontent.com to download the public model catalog. No information about this PC is sent.",
+      refreshOnce: "Refresh once",
+      alwaysAllowRefresh: "Always allow",
+      cancelRefresh: "Cancel",
+      refreshSuccess: (count: number, added: number, updated: number) =>
+        `Catalog refreshed: ${count} models (${added} new, ${updated} updated).`,
+      refreshUpToDate: "The model catalog is already up to date.",
+      refreshFailed: (reason: string) => `Couldn't refresh the catalog: ${reason}`,
+      noSubscribedFamilies: "No model families are selected. Choose families in Settings.",
+      catalogWarning: (warning: string) => `Catalog warning: ${warning}`,
+      catalogUpdated: (date: string) => `Catalog generated ${date}`,
       context: "Context length",
       contextHint: "How much text the model can keep in mind at once.",
       contextOption: (k: number) => `${k}K tokens`,
@@ -93,6 +107,7 @@ export const en = {
       onGpu: "Graphics memory",
       onRam: "System memory",
       params: (b: number) => `${b}B parameters`,
+      gated: "Access gated",
       openDetails: (name: string) => `Open details for ${name}`,
       license: {
         open_source: "Open source",
@@ -115,7 +130,20 @@ export const en = {
       subtitle: "A few preferences, nothing more.",
       privacy: {
         title: "Privacy",
-        body: "Aangan works offline and collects no data. What it reads on this PC stays on this PC.",
+        body: "Aangan works offline by default and collects no data. If you choose to refresh the catalog, it contacts raw.githubusercontent.com to download public model metadata; no information about this PC is sent.",
+      },
+      catalog: {
+        title: "Model catalog",
+        body: "Recommendations use a bundled catalog by default. Choose which model families to include. You can reset any downloaded catalog to the bundled version.",
+        loading: "Loading catalog settings",
+        loadFailed: (reason: string) => `Couldn't read catalog settings: ${reason}`,
+        updated: (date: string) => `Catalog generated ${date}`,
+        families: "Subscribed model families",
+        alwaysAllow: "Allow future catalog refreshes without asking",
+        reset: "Reset to bundled catalog",
+        resetComplete: "Model catalog reset to the bundled version",
+        resetFailed: (reason: string) => `Couldn't reset the catalog: ${reason}`,
+        saveFailed: (reason: string) => `Couldn't save catalog settings: ${reason}`,
       },
       data: {
         title: "Data",

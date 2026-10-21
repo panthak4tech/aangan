@@ -5,6 +5,21 @@ export interface AppPaths {
   data_dir_exists: boolean;
 }
 
+export interface CatalogInfo {
+  generated_at: string;
+  families: string[];
+  subscribed_families: string[];
+  refresh_catalog_always_allowed: boolean;
+  warning: string | null;
+}
+
+export interface CatalogRefreshResult {
+  generated_at: string;
+  model_count: number;
+  added: number;
+  updated: number;
+}
+
 export interface GpuInfo {
   name: string;
   vendor: GpuVendor;
