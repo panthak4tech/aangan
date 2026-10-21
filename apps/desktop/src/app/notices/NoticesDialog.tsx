@@ -13,6 +13,7 @@ import { en } from "@/i18n/en";
 import {
   filterNotices,
   mergeNotices,
+  noticeKey,
   sortNotices,
 } from "../../../../../scripts/notices-data.mjs";
 
@@ -63,7 +64,7 @@ export function NoticesDialog({
           ) : (
             <ul className="space-y-3">
               {visibleNotices.map((notice) => (
-                <li key={`${notice.name}@${notice.version}`} className="rounded-lg border border-border p-4">
+              <li key={noticeKey(notice)} className="rounded-lg border border-border p-4">
                   <div className="flex flex-wrap items-center gap-2">
                     <h3 className="font-semibold">{notice.name}</h3>
                     <Badge variant="secondary">{notice.version}</Badge>
