@@ -23,6 +23,12 @@ ManifestDPIAwareness PerMonitorV2
 !include FileFunc.nsh
 !include x64.nsh
 !include WordFunc.nsh
+!ifndef HWND_BROADCAST
+  !define HWND_BROADCAST 0xFFFF
+!endif
+!ifndef WM_SETTINGCHANGE
+  !define WM_SETTINGCHANGE 0x001A
+!endif
 ; Change shell and registry context based on running
 ; architecture and chosen install mode.
 !macro SetContext
@@ -226,6 +232,21 @@ ManifestDPIAwareness PerMonitorV2
     ${If} $1 P<> 0
       ${IPersistFile::Load} $1 '("${shortcut}", ${STGM_READWRITE})'
       ${IShellLink::SetPath} $0 '(w "${target}")'
+      ${IPersistFile::Save} $1 '("${shortcut}",1)'
+      ${IUnknown::Release} $1 ""
+    ${EndIf}
+    ${IUnknown::Release} $0 ""
+  ${EndIf}
+!macroend
+
+; Point shortcut icon lookup at the desktop executable's embedded Tauri icon.
+!macro SetShortcutIcon shortcut icon
+  !insertmacro ComHlpr_CreateInProcInstance ${CLSID_ShellLink} ${IID_IShellLink} r0 ""
+  ${If} $0 P<> 0
+    ${IUnknown::QueryInterface} $0 '("${IID_IPersistFile}",.r1)'
+    ${If} $1 P<> 0
+      ${IPersistFile::Load} $1 '("${shortcut}", ${STGM_READWRITE})'
+      ${IShellLink::SetIconLocation} $0 '(w "${icon}", i 0)'
       ${IPersistFile::Save} $1 '("${shortcut}",1)'
       ${IUnknown::Release} $1 ""
     ${EndIf}
@@ -645,7 +666,46 @@ FunctionEnd
 !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
 !insertmacro MUI_PAGE_DIRECTORY
 
-; 6. Start menu shortcut page
+; 6. Optional CLI PATH page
+Var CliPathCheckbox
+Var CliPathEnabled
+Var CliPathPageShown
+Var CliPathChoiceInitialized
+Page custom CliPathPageCreate CliPathPageLeave
+Function CliPathPageCreate
+  ${If} $PassiveMode = 1
+    Abort
+  ${EndIf}
+  StrCpy $CliPathPageShown 1
+
+  !insertmacro MUI_HEADER_TEXT "Command-line tools" "Optionally add the Aangan CLI to your current-user PATH."
+  nsDialogs::Create 1018
+  Pop $0
+  ${If} $0 == error
+    Abort
+  ${EndIf}
+
+  ${NSD_CreateLabel} 0 0 100% 30u "This lets you run aangan from any terminal. Existing PATH entries are preserved, and this entry is removed when you uninstall."
+  Pop $0
+  ${NSD_CreateCheckbox} 0 42u 100% 12u "Add Aangan CLI to my current-user PATH"
+  Pop $CliPathCheckbox
+  ${If} $CliPathChoiceInitialized != 1
+    ReadRegDWORD $0 HKCU "${UNINSTKEY}" "CliPathAdded"
+    ${If} $0 == 1
+      StrCpy $CliPathEnabled ${BST_CHECKED}
+    ${Else}
+      StrCpy $CliPathEnabled ${BST_UNCHECKED}
+    ${EndIf}
+    StrCpy $CliPathChoiceInitialized 1
+  ${EndIf}
+  ${NSD_SetState} $CliPathCheckbox $CliPathEnabled
+  nsDialogs::Show
+FunctionEnd
+Function CliPathPageLeave
+  ${NSD_GetState} $CliPathCheckbox $CliPathEnabled
+FunctionEnd
+
+; 7. Start menu shortcut page
 Var AppStartMenuFolder
 !if "${STARTMENUFOLDER}" != ""
   !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
@@ -655,10 +715,10 @@ Var AppStartMenuFolder
 !endif
 !insertmacro MUI_PAGE_STARTMENU Application $AppStartMenuFolder
 
-; 7. Installation page
+; 8. Installation page
 !insertmacro MUI_PAGE_INSTFILES
 
-; 8. Finish page
+; 9. Finish page
 ;
 ; Don't auto jump to finish page after installation page,
 ; because the installation page has useful info that can be used debug any issues with the installer.
@@ -905,6 +965,15 @@ Section Install
     !insertmacro NSIS_HOOK_PREINSTALL
   !endif
 
+  ; Remove the previous desktop binary before copying the CLI sidecar. Older releases
+  ; used Aangan.exe, which is the same Windows path as the CLI's aangan.exe.
+  ReadRegStr $OldMainBinaryName SHCTX "${UNINSTKEY}" "MainBinaryName"
+  ${If} $OldMainBinaryName != ""
+  ${AndIf} $OldMainBinaryName != "${MAINBINARYNAME}.exe"
+    !insertmacro CheckIfAppIsRunning "$INSTDIR\$OldMainBinaryName" "${PRODUCTNAME}"
+    Delete /REBOOTOK "$INSTDIR\$OldMainBinaryName"
+  ${EndIf}
+
   !insertmacro CheckIfAppIsRunning "$INSTDIR\${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
 
   ; Copy main executable
@@ -918,10 +987,31 @@ Section Install
     File /a "/oname={{this.[1]}}" "{{no-escape @key}}"
   {{/each}}
 
+  ; The CLI sidecar is installed as aangan.exe by Tauri.
+  !insertmacro CheckIfAppIsRunning "$INSTDIR\aangan.exe" "Aangan CLI"
+
   ; Copy external binaries
   {{#each binaries}}
     File /a "/oname={{this}}" "{{no-escape @key}}"
   {{/each}}
+
+  ${If} $CliPathPageShown = 1
+    ${If} $CliPathEnabled == ${BST_CHECKED}
+      ExecWait '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\cli-path.ps1" -Action Add -InstallDir "$INSTDIR" -MarkerKey "${UNINSTKEY}"' $0
+      ${If} $0 == 0
+        SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
+      ${Else}
+        MessageBox MB_ICONEXCLAMATION "Aangan could not update your PATH. You can still run the CLI from $\"$INSTDIR\aangan.exe$\"."
+      ${EndIf}
+    ${Else}
+      ExecWait '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\cli-path.ps1" -Action Remove -InstallDir "$INSTDIR" -MarkerKey "${UNINSTKEY}"' $0
+      ${If} $0 == 0
+        SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
+      ${Else}
+        MessageBox MB_ICONEXCLAMATION "Aangan could not update your PATH. Remove $\"$INSTDIR$\" from your user PATH if you no longer want the CLI command."
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
 
   ; Create file associations
   {{#each file_associations as |association| ~}}
@@ -949,13 +1039,6 @@ Section Install
     ; or when uninstalling
     WriteRegStr SHCTX "${UNINSTKEY}" $MultiUser.InstallMode 1
   !endif
-
-  ; Remove old main binary if it doesn't match new main binary name
-  ReadRegStr $OldMainBinaryName SHCTX "${UNINSTKEY}" "MainBinaryName"
-  ${If} $OldMainBinaryName != ""
-  ${AndIf} $OldMainBinaryName != "${MAINBINARYNAME}.exe"
-    Delete "$INSTDIR\$OldMainBinaryName"
-  ${EndIf}
 
   ; Save current MAINBINARYNAME for future updates
   WriteRegStr SHCTX "${UNINSTKEY}" "MainBinaryName" "${MAINBINARYNAME}.exe"
@@ -1043,10 +1126,21 @@ Section Uninstall
   !endif
 
   !insertmacro CheckIfAppIsRunning "$INSTDIR\${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
+  !insertmacro CheckIfAppIsRunning "$INSTDIR\aangan.exe" "Aangan CLI"
+
+  ${If} $UpdateMode <> 1
+    ExecWait '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\cli-path.ps1" -Action Remove -InstallDir "$INSTDIR" -MarkerKey "${UNINSTKEY}"' $0
+    ${If} $0 == 0
+      SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
+    ${Else}
+      MessageBox MB_ICONEXCLAMATION "Aangan could not remove its CLI entry from your user PATH. Remove $\"$INSTDIR$\" manually if you no longer want the CLI command."
+    ${EndIf}
+  ${EndIf}
 
   ; Delete the app directory and its content from disk
   ; Copy main executable
   Delete /REBOOTOK "$INSTDIR\${MAINBINARYNAME}.exe"
+  Delete /REBOOTOK "$INSTDIR\aangan.exe"
 
   ; Delete resources
   {{#each resources}}
@@ -1183,6 +1277,7 @@ Function CreateOrUpdateStartMenuShortcut
   Pop $0
   ${If} $0 = 1
     !insertmacro SetShortcutTarget "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+    !insertmacro SetShortcutIcon "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
     StrCpy $R0 1
   ${EndIf}
 
@@ -1190,6 +1285,7 @@ Function CreateOrUpdateStartMenuShortcut
   Pop $0
   ${If} $0 = 1
     !insertmacro SetShortcutTarget "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+    !insertmacro SetShortcutIcon "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
     StrCpy $R0 1
   ${EndIf}
 
@@ -1208,10 +1304,10 @@ Function CreateOrUpdateStartMenuShortcut
 
   !if "${STARTMENUFOLDER}" != ""
     CreateDirectory "$SMPROGRAMS\$AppStartMenuFolder"
-    CreateShortcut "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+    CreateShortcut "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\${MAINBINARYNAME}.exe"
     !insertmacro SetLnkAppUserModelId "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk"
   !else
-    CreateShortcut "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+    CreateShortcut "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\${MAINBINARYNAME}.exe"
     !insertmacro SetLnkAppUserModelId "$SMPROGRAMS\${PRODUCTNAME}.lnk"
   !endif
 FunctionEnd
@@ -1223,6 +1319,7 @@ Function CreateOrUpdateDesktopShortcut
   Pop $0
   ${If} $0 = 1
     !insertmacro SetShortcutTarget "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+    !insertmacro SetShortcutIcon "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
     Return
   ${EndIf}
 
@@ -1235,6 +1332,6 @@ Function CreateOrUpdateDesktopShortcut
     ${EndIf}
   ${EndIf}
 
-  CreateShortcut "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+  CreateShortcut "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\${MAINBINARYNAME}.exe"
   !insertmacro SetLnkAppUserModelId "$DESKTOP\${PRODUCTNAME}.lnk"
 FunctionEnd

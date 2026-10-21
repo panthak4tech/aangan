@@ -2,7 +2,10 @@
 
 Find out which open AI models your PC can run, and how fast, before you download anything.
 
-> Status: CLI v0.1; desktop v0.2.0. Windows first. Offline by default: only a user-approved catalog refresh contacts `raw.githubusercontent.com`, and no PC information is sent.
+> Status: CLI v0.1; current desktop version v0.2.0. v0.3.0 is in preparation and awaits
+> maintainer review; it has not been released or tagged. Windows first. Offline by default:
+> only a user-approved catalog refresh contacts `raw.githubusercontent.com`, and no PC
+> information is sent.
 
 ## Try it
 
@@ -22,8 +25,9 @@ Speeds are **estimates** from published formulas in [docs/estimation.md](docs/es
 ## Help wanted
 
 - Run `aangan scan --json` and file a **Hardware report**.
-- Add or verify models in `catalog/models.json`.
-- Desktop catalog refreshes use the versioned contract in `catalog/models.v1.json`; see `catalog/schema.v1.json`.
+- The CLI's bundled catalog is `catalog/models.json`.
+- The desktop's bundled and refreshable catalog is `catalog/models.v1.json`; see `catalog/schema.v1.json`.
+- In the desktop app, open **Models → Refresh catalog** to check Aangan's curated catalog hosted on GitHub. Refresh does not search Hugging Face or download model weights. The bundled desktop catalog currently contains seven Qwen2.5 sizes; adding models requires curating their metadata in `catalog/models.v1.json`.
 - Add test fixtures in `fixtures/profiles/`.
 
 License: MIT. Model weights keep their own licenses.

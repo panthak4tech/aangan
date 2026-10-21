@@ -41,3 +41,15 @@ values must come from the GGUF file header; set `"verified": true` only then.
 
 No Contributor License Agreement (CLA) is required. By contributing, you agree
 your work is licensed under the MIT license.
+
+## Dependency notices
+
+After changing Rust or production frontend dependencies, regenerate the
+committed license notices with `npm run notices` from `apps/desktop`. This
+requires the `cargo-about` CLI and the project's npm dependencies:
+
+```sh
+cargo install --locked --features cli cargo-about
+cd apps/desktop
+npm run notices
+```

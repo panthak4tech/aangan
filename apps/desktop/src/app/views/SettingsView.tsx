@@ -1,13 +1,22 @@
-import { FolderOpen, Info, Languages, ShieldCheck } from "lucide-react";
+import { Database, FolderOpen, Info, Languages, ShieldCheck } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { openPath } from "@tauri-apps/plugin-opener";
-import { APP_INFO, getAppPaths } from "@/api/api";
-import type { AppPaths } from "@/api/types";
+import { NoticesDialog } from "@/app/notices/NoticesDialog";
+import {
+  APP_INFO,
+  getAppPaths,
+  getCatalogInfo,
+  resetCatalog,
+  setCatalogRefreshConsent,
+  setSubscribedFamilies,
+} from "@/api/api";
+import type { AppPaths, CatalogInfo } from "@/api/types";
 import { SpecRow } from "@/components/aangan/SystemSpecCard";
 import { Badge } from "@/components/primitives/badge";
 import { Button } from "@/components/primitives/button";
 import { Card } from "@/components/primitives/card";
+import { Checkbox } from "@/components/primitives/checkbox";
 import { RadioGroup, RadioGroupItem } from "@/components/primitives/radio-group";
 import { Skeleton } from "@/components/primitives/skeleton";
 import { useToast } from "@/components/ui/toast-provider";
@@ -43,6 +52,12 @@ export function SettingsView() {
   const [pathsLoading, setPathsLoading] = useState(true);
   const [pathsError, setPathsError] = useState<string | null>(null);
   const [copyingPath, setCopyingPath] = useState(false);
+  const [noticesOpen, setNoticesOpen] = useState(false);
+  const [catalogInfo, setCatalogInfo] = useState<CatalogInfo | null>(null);
+  const [catalogLoading, setCatalogLoading] = useState(true);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [catalogSaving, setCatalogSaving] = useState(false);
+  const [catalogResetting, setCatalogResetting] = useState(false);
   const toast = useToast();
 
   useEffect(() => {
@@ -58,10 +73,61 @@ export function SettingsView() {
         if (mounted) setPathsLoading(false);
       });
 
+    void getCatalogInfo()
+      .then((info) => {
+        if (mounted) setCatalogInfo(info);
+      })
+      .catch((error: unknown) => {
+        if (mounted) setCatalogError(errorMessage(error));
+      })
+      .finally(() => {
+        if (mounted) setCatalogLoading(false);
+      });
+
     return () => {
       mounted = false;
     };
   }, []);
+
+  const updateFamilies = async (family: string, subscribed: boolean) => {
+    if (!catalogInfo) return;
+    const families = subscribed
+      ? [...catalogInfo.subscribed_families, family]
+      : catalogInfo.subscribed_families.filter((item) => item !== family);
+    setCatalogSaving(true);
+    try {
+      setCatalogInfo(await setSubscribedFamilies(families));
+    } catch (error) {
+      toast(t.catalog.saveFailed(errorMessage(error)), { variant: "destructive" });
+    } finally {
+      setCatalogSaving(false);
+    }
+  };
+
+  const updateRefreshConsent = async (alwaysAllowed: boolean) => {
+    if (!catalogInfo) return;
+    setCatalogSaving(true);
+    try {
+      await setCatalogRefreshConsent(alwaysAllowed);
+      setCatalogInfo(await getCatalogInfo());
+    } catch (error) {
+      toast(t.catalog.saveFailed(errorMessage(error)), { variant: "destructive" });
+    } finally {
+      setCatalogSaving(false);
+    }
+  };
+
+  const resetCachedCatalog = async () => {
+    setCatalogResetting(true);
+    try {
+      setCatalogInfo(await resetCatalog());
+      toast(t.catalog.resetComplete, { variant: "success" });
+    } catch (error) {
+      toast(t.catalog.resetFailed(errorMessage(error)), { variant: "destructive" });
+    } finally {
+      setCatalogResetting(false);
+    }
+  };
 
   const openDataFolder = async () => {
     if (!appPaths) return;
@@ -121,6 +187,55 @@ export function SettingsView() {
         <p className="text-xs text-muted-foreground">{t.data.hint}</p>
       </SettingsSection>
 
+      <SettingsSection icon={Database} title={t.catalog.title}>
+        <p className="text-sm text-muted-foreground">{t.catalog.body}</p>
+        <p className="text-sm text-muted-foreground">{t.catalog.source}</p>
+        {catalogLoading ? (
+          <Skeleton role="status" aria-label={t.catalog.loading} className="h-8 w-full" />
+        ) : catalogError ? (
+          <p role="alert" className="text-sm text-destructive">
+            {t.catalog.loadFailed(catalogError)}
+          </p>
+        ) : catalogInfo ? (
+          <>
+            <p className="text-sm text-muted-foreground">
+              {t.catalog.updated(formatCatalogDate(catalogInfo.generated_at))}
+            </p>
+            {catalogInfo.warning && (
+              <p role="alert" className="text-sm text-destructive">{catalogInfo.warning}</p>
+            )}
+            <fieldset className="flex flex-col gap-2" disabled={catalogSaving}>
+              <legend className="text-sm font-medium text-foreground">{t.catalog.families}</legend>
+              {catalogInfo.families.map((family) => (
+                <label key={family} className="flex items-center gap-2 text-sm text-foreground">
+                  <Checkbox
+                    checked={catalogInfo.subscribed_families.includes(family)}
+                    onCheckedChange={(checked) => void updateFamilies(family, checked === true)}
+                  />
+                  {family}
+                </label>
+              ))}
+            </fieldset>
+            <label className="flex items-start gap-2 text-sm text-foreground">
+              <Checkbox
+                checked={catalogInfo.refresh_catalog_always_allowed}
+                disabled={catalogSaving}
+                onCheckedChange={(checked) => void updateRefreshConsent(checked === true)}
+              />
+              <span>{t.catalog.alwaysAllow}</span>
+            </label>
+            <Button
+              variant="outline"
+              className="w-fit"
+              onClick={() => void resetCachedCatalog()}
+              disabled={catalogResetting || catalogLoading}
+            >
+              {t.catalog.reset}
+            </Button>
+          </>
+        ) : null}
+      </SettingsSection>
+
       <SettingsSection icon={Languages} title={t.language.title}>
         <RadioGroup value={lang} onValueChange={setLang} className="gap-3">
           {APP_INFO.languages.map((l) => (
@@ -143,15 +258,24 @@ export function SettingsView() {
           <SpecRow label={t.about.version} value={APP_INFO.version} />
           <SpecRow label={t.about.license} value={APP_INFO.license} />
         </dl>
-        {/* Text only: the app is offline, so nothing opens when this is read. */}
-        <span className="w-fit select-all text-sm font-medium text-primary underline underline-offset-4">
+        <button
+          type="button"
+          className="w-fit text-sm font-medium text-primary underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          aria-haspopup="dialog"
+          onClick={() => setNoticesOpen(true)}
+        >
           {t.about.notices}
-        </span>
+        </button>
       </SettingsSection>
+      <NoticesDialog open={noticesOpen} onOpenChange={setNoticesOpen} />
     </section>
   );
 }
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function formatCatalogDate(value: string): string {
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(value));
 }

@@ -10,12 +10,20 @@ export const FIT_VARIANT: Record<Fit, "fit-great" | "fit-good" | "fit-slow" | "f
 
 export const CONTEXT_OPTIONS = [2048, 4096, 8192, 16384, 32768] as const;
 
-/** Memory pool the estimate is compared against: VRAM when on a dedicated GPU, else free RAM. */
+/** Usable memory budget used by the estimator, rather than momentary free memory. */
 export function availableFor(p: HardwareProfile, e: Estimate): { bytes: number; onGpu: boolean } {
-  const gpu = p.gpus.find((g) => !g.is_integrated && g.dedicated_vram_bytes > 0);
+  const gpu = p.gpus
+    .filter((g) => !g.is_integrated && g.dedicated_vram_bytes > 0)
+    .reduce<(typeof p.gpus)[number] | undefined>(
+      (largest, candidate) =>
+        !largest || candidate.dedicated_vram_bytes > largest.dedicated_vram_bytes
+          ? candidate
+          : largest,
+      undefined,
+    );
   if (gpu && (e.placement.kind === "full_gpu" || e.placement.kind === "partial_gpu"))
-    return { bytes: gpu.dedicated_vram_bytes, onGpu: true };
-  return { bytes: p.memory.available_bytes, onGpu: false };
+    return { bytes: Math.floor(gpu.dedicated_vram_bytes * 0.9), onGpu: true };
+  return { bytes: Math.floor(p.memory.total_bytes * 0.7), onGpu: false };
 }
 
 export interface FilteredRecommendations {

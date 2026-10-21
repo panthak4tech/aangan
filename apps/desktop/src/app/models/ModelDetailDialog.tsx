@@ -50,6 +50,7 @@ export function ModelDetailDialog({
                     <FitBadge fit={estimate.fit} />
                     {rec.badges.includes("best_fit") && <Badge variant="accent">{en.badges.best_fit}</Badge>}
                     {rec.badges.includes("fastest") && <Badge variant="secondary">{en.badges.fastest}</Badge>}
+                    {model.tags.includes("gated") && <Badge variant="outline">{en.views.models.gated}</Badge>}
                   </div>
                   <DialogTitle className="font-display text-2xl">{model.name}</DialogTitle>
                   <DialogDescription>{t.subtitle(model.family, model.params_b, model.quant)}</DialogDescription>

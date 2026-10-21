@@ -9,6 +9,8 @@ import { save } from "@tauri-apps/plugin-dialog";
 
 beforeEach(() => {
   Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+  window.localStorage.removeItem("aangan.catalog.subscribedFamilies");
+  window.localStorage.removeItem("aangan.catalog.refreshAlwaysAllowed");
   vi.resetModules();
 });
 
@@ -110,6 +112,36 @@ describe("browser API wrappers", () => {
     await expect(getAppPaths()).resolves.toEqual(appPaths);
     expect(invoke).toHaveBeenCalledWith("get_app_paths");
   });
+
+  it("uses browser storage for catalog preferences without refreshing over the webview", async () => {
+    const {
+      getCatalogInfo,
+      refreshCatalog,
+      resetCatalog,
+      setCatalogRefreshConsent,
+      setSubscribedFamilies,
+    } = await import("@/api/api");
+
+    const initial = await getCatalogInfo();
+    expect(initial.subscribed_families).toEqual(["qwen2.5"]);
+    expect(initial.refresh_catalog_always_allowed).toBe(false);
+    await setSubscribedFamilies([]);
+    await setCatalogRefreshConsent(true);
+    expect((await getCatalogInfo()).subscribed_families).toEqual([]);
+    expect((await getCatalogInfo()).refresh_catalog_always_allowed).toBe(true);
+    await expect(resetCatalog()).resolves.toEqual(await getCatalogInfo());
+    await expect(refreshCatalog(true)).rejects.toThrow(
+      "Catalog refresh is available only in the desktop app.",
+    );
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("surfaces invalid browser catalog settings", async () => {
+    window.localStorage.setItem("aangan.catalog.subscribedFamilies", "{");
+    const { getCatalogInfo } = await import("@/api/api");
+
+    await expect(getCatalogInfo()).rejects.toThrow();
+  });
 });
 
 it("delegates scans and recommendations to Tauri when its runtime is present", async () => {
@@ -117,16 +149,56 @@ it("delegates scans and recommendations to Tauri when its runtime is present", a
     configurable: true,
     value: {},
   });
+  const info = {
+      generated_at: "2026-10-21T13:30:00Z",
+      families: ["qwen2.5"],
+      subscribed_families: ["qwen2.5"],
+      refresh_catalog_always_allowed: true,
+      warning: null,
+  };
+  const refreshResult = {
+    generated_at: info.generated_at,
+    model_count: 7,
+    added: 0,
+    updated: 0,
+  };
   vi.mocked(invoke)
     .mockResolvedValueOnce(PRESETS.desktop_3060)
-    .mockResolvedValueOnce([]);
-  const { recommendModels, scanHardware } = await import("@/api/api");
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce(info)
+    .mockResolvedValueOnce(info)
+    .mockResolvedValueOnce(undefined)
+    .mockResolvedValueOnce(info)
+    .mockResolvedValueOnce(refreshResult);
+  const {
+    getCatalogInfo,
+    recommendModels,
+    refreshCatalog,
+    resetCatalog,
+    scanHardware,
+    setCatalogRefreshConsent,
+    setSubscribedFamilies,
+  } = await import("@/api/api");
 
   await expect(scanHardware(true)).resolves.toEqual(PRESETS.desktop_3060);
   await expect(recommendModels(PRESETS.desktop_3060, 8192)).resolves.toEqual([]);
+  expect(await getCatalogInfo()).toEqual(info);
+  await setSubscribedFamilies(["qwen2.5"]);
+  await setCatalogRefreshConsent(true);
+  await resetCatalog();
+  await expect(refreshCatalog(false)).resolves.toEqual(refreshResult);
   expect(invoke).toHaveBeenNthCalledWith(1, "scan_hardware", { measureBandwidth: true });
   expect(invoke).toHaveBeenNthCalledWith(2, "recommend_models", {
     profile: PRESETS.desktop_3060,
     context: 8192,
   });
+  expect(invoke).toHaveBeenNthCalledWith(3, "get_catalog_info");
+  expect(invoke).toHaveBeenNthCalledWith(4, "set_subscribed_families", {
+    families: ["qwen2.5"],
+  });
+  expect(invoke).toHaveBeenNthCalledWith(5, "set_catalog_refresh_consent", {
+    alwaysAllowed: true,
+  });
+  expect(invoke).toHaveBeenNthCalledWith(6, "reset_catalog");
+  expect(invoke).toHaveBeenNthCalledWith(7, "refresh_catalog", { consentOnce: false });
 });
