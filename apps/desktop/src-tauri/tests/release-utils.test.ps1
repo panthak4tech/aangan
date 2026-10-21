@@ -43,6 +43,21 @@ Assert-Throws "invalid desktop version" {
   Assert-ReleaseVersion -Tag "v0.3.0" -DesktopVersion "0.3"
 } "Desktop version"
 
+$releaseWorkflowPath = Join-Path $PSScriptRoot "..\..\..\..\.github\workflows\release.yml"
+$releaseWorkflow = Get-Content -LiteralPath $releaseWorkflowPath -Raw
+$actionReferences = [regex]::Matches(
+  $releaseWorkflow,
+  '(?m)^\s*-\s*uses:\s*[^@\s]+@([^\s#]+)'
+)
+if ($actionReferences.Count -eq 0) {
+  throw "Release workflow must declare its GitHub Actions."
+}
+foreach ($actionReference in $actionReferences) {
+  if ($actionReference.Groups[1].Value -notmatch "^[0-9a-f]{40}$") {
+    throw "Release workflow action is not pinned to a full commit SHA: $($actionReference.Value)"
+  }
+}
+
 $testDirectory = Join-Path ([IO.Path]::GetTempPath()) "aangan-release-test-$([Guid]::NewGuid())"
 New-Item -ItemType Directory -Path $testDirectory | Out-Null
 try {
