@@ -83,16 +83,17 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function javascriptNotices(licenseData) {
-  return Object.entries(licenseData).map(([packageKey, metadata]) => {
+function javascriptNotices(licenseData, projectPackageName) {
+  return Object.entries(licenseData).flatMap(([packageKey, metadata]) => {
     const separator = packageKey.lastIndexOf("@");
     const packageName = separator > 0 ? packageKey.slice(0, separator) : packageKey;
+    if (packageName === projectPackageName) return [];
     if (!metadata.licenseFile) {
       throw new Error(`No license file found for JavaScript dependency ${packageKey}`);
     }
     const text = readFileSync(metadata.licenseFile, "utf8").trim();
     if (!text) throw new Error(`Empty license file for JavaScript dependency ${packageKey}`);
-    return {
+    return [{
       name: fontNames.get(packageName) ?? packageName,
       version: metadata.version ?? packageKey.slice(separator + 1),
       license: metadata.licenses,
@@ -101,7 +102,7 @@ function javascriptNotices(licenseData) {
           ? metadata.repository
           : `https://www.npmjs.com/package/${encodeURIComponent(packageName)}`,
       text,
-    };
+    }];
   });
 }
 
@@ -135,7 +136,11 @@ try {
     text: readFileSync(path.join(repositoryRoot, "LICENSE"), "utf8").trim(),
   };
   const notices = sortNotices(
-    mergeNotices(rustNotices(cargoData), javascriptNotices(licenseData), [ownLicense]),
+    mergeNotices(
+      rustNotices(cargoData),
+      javascriptNotices(licenseData, aanganPackage.name),
+      [ownLicense],
+    ),
   );
 
   writeFileSync(

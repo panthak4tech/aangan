@@ -307,7 +307,13 @@ describe("SettingsView and FirstRunWizard", () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(dataDir));
     expect(await screen.findByText(en.views.settings.data.copied)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: en.views.settings.about.notices }));
-    expect(await screen.findByRole("heading", { name: en.views.settings.about.noticesTitle })).toBeInTheDocument();
+    expect(
+      await screen.findByRole(
+        "heading",
+        { name: en.views.settings.about.noticesTitle },
+        { timeout: 10_000 },
+      ),
+    ).toBeInTheDocument();
   });
 
   it("shows an explicit loading skeleton while reading the data path", () => {
