@@ -33,6 +33,9 @@ npm run test
 npm run build
 ```
 
+Maintainers should follow the [release checklist](docs/releasing.md) before
+creating a version tag.
+
 Estimator changes need a test (see `crates/fitcalc/tests`). For catalog changes,
 values must come from the GGUF file header; set `"verified": true` only then.
 

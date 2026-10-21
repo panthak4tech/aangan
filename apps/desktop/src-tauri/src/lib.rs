@@ -260,6 +260,46 @@ mod tests {
     }
 
     #[test]
+    fn installer_bundles_cli_and_removes_only_managed_path_entry() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("valid Tauri config");
+        let external_binaries = config["bundle"]["externalBin"]
+            .as_array()
+            .expect("configured external binaries");
+        assert!(
+            external_binaries
+                .iter()
+                .any(|binary| binary.as_str() == Some("binaries/aangan")),
+            "Tauri must bundle the CLI sidecar"
+        );
+
+        let installer = include_str!("../installer.nsi");
+        assert!(
+            installer.contains(r#"File /a "/oname={{this}}" "{{no-escape @key}}""#),
+            "NSIS must copy Tauri's external binaries"
+        );
+        assert!(installer.contains("aangan.exe"));
+        assert!(
+            installer.contains(r#"-Action Add -InstallDir "$INSTDIR" -MarkerKey "${UNINSTKEY}""#),
+            "the optional PATH action must add the install directory"
+        );
+        assert!(
+            installer
+                .contains(r#"-Action Remove -InstallDir "$INSTDIR" -MarkerKey "${UNINSTKEY}""#),
+            "uninstall must remove the optional PATH entry"
+        );
+
+        let path_script = include_str!("../cli-path.ps1");
+        assert!(
+            path_script.contains(
+                r#"if ($null -eq $marker -or $marker.GetValue("CliPathAdded", 0) -ne 1)"#
+            ),
+            "PATH cleanup must require Aangan's ownership marker"
+        );
+        assert!(path_script.contains("Remove-AanganPathEntry"));
+    }
+
+    #[test]
     fn installer_shortcuts_use_the_desktop_executable_icon() {
         let installer = include_str!("../installer.nsi");
         assert!(
@@ -270,26 +310,36 @@ mod tests {
             installer
                 .matches(r#"!insertmacro SetShortcutIcon "#)
                 .count(),
-            3,
-            "Start Menu and desktop shortcuts must all refresh their icon"
+            6,
+            "new and migrated Start Menu and desktop shortcuts must set their icon"
         );
-        assert!(
-            installer.contains(
-                r#"CreateShortcut "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\${MAINBINARYNAME}.exe""#
-            ),
-            "new Start Menu shortcuts must use the desktop executable icon"
+        assert_shortcut_sets_icon_after_create(
+            installer,
+            r#"CreateShortcut "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\${MAINBINARYNAME}.exe""#,
+            r#"!insertmacro SetShortcutIcon "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe""#,
         );
-        assert!(
-            installer.contains(
-                r#"CreateShortcut "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\${MAINBINARYNAME}.exe""#
-            ),
-            "new Start Menu shortcuts must use the desktop executable icon"
+        assert_shortcut_sets_icon_after_create(
+            installer,
+            r#"CreateShortcut "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\${MAINBINARYNAME}.exe""#,
+            r#"!insertmacro SetShortcutIcon "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe""#,
         );
+        assert_shortcut_sets_icon_after_create(
+            installer,
+            r#"CreateShortcut "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\${MAINBINARYNAME}.exe""#,
+            r#"!insertmacro SetShortcutIcon "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe""#,
+        );
+    }
+
+    fn assert_shortcut_sets_icon_after_create(installer: &str, creation: &str, icon: &str) {
+        let creation_index = installer.find(creation).expect("new shortcut is created");
+        let remaining = &installer[creation_index + creation.len()..];
+        let icon_index = remaining.find(icon).expect("shortcut icon is set");
+        let app_user_model_id_index = remaining
+            .find("!insertmacro SetLnkAppUserModelId")
+            .expect("shortcut AppUserModelId is set");
         assert!(
-            installer.contains(
-                r#"CreateShortcut "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\${MAINBINARYNAME}.exe""#
-            ),
-            "new desktop shortcuts must use the desktop executable icon"
+            icon_index < app_user_model_id_index,
+            "shortcut icon location must be persisted before its AppUserModelId"
         );
     }
 
