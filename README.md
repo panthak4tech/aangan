@@ -13,6 +13,10 @@ Download `aangan.exe` from Releases, then in PowerShell:
 .\aangan.exe recommend
 ```
 
+The desktop installer also bundles the CLI. If you select the optional
+current-user PATH setting during installation, run `aangan scan` and
+`aangan recommend` from any terminal.
+
 Speeds are **estimates** from published formulas in [docs/estimation.md](docs/estimation.md); real measured benchmarks are on the roadmap.
 
 ## Help wanted

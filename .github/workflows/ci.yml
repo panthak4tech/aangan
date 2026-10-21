@@ -104,6 +104,7 @@ jobs:
           cache-dependency-path: apps/desktop/package-lock.json
       - run: npm ci && npm run build
         working-directory: apps/desktop
+      - run: powershell -NoProfile -File apps/desktop/src-tauri/tests/cli-path.test.ps1
       - run: cargo clippy -p ${{ env.DESKTOP_CRATE }} --all-targets --locked -- -D warnings
 
   licenses:

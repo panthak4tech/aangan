@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:bundle": "npm run stage:cli-sidecar && npm run build",
+    "stage:cli-sidecar": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stage-cli-sidecar.ps1",
     "preview": "vite preview",
     "tauri": "tauri",
     "lint": "eslint .",
