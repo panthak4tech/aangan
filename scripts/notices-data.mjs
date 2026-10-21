@@ -32,3 +32,26 @@ export function filterNotices(notices, query) {
       .includes(normalizedQuery),
   );
 }
+
+export function javascriptNotices(licenseData, projectPackageName, fontNames, readLicenseText) {
+  return Object.entries(licenseData).flatMap(([packageKey, metadata]) => {
+    const separator = packageKey.lastIndexOf("@");
+    const packageName = separator > 0 ? packageKey.slice(0, separator) : packageKey;
+    if (packageName === projectPackageName) return [];
+    if (!metadata.licenseFile) {
+      throw new Error(`No license file found for JavaScript dependency ${packageKey}`);
+    }
+    const text = readLicenseText(metadata.licenseFile).trim();
+    if (!text) throw new Error(`Empty license file for JavaScript dependency ${packageKey}`);
+    return [{
+      name: fontNames.get(packageName) ?? packageName,
+      version: metadata.version ?? packageKey.slice(separator + 1),
+      license: metadata.licenses,
+      repository:
+        typeof metadata.repository === "string" && metadata.repository.length > 0
+          ? metadata.repository
+          : `https://www.npmjs.com/package/${encodeURIComponent(packageName)}`,
+      text,
+    }];
+  });
+}
