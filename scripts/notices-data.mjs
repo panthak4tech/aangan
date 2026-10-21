@@ -33,6 +33,14 @@ export function filterNotices(notices, query) {
   );
 }
 
+export function normalizeLicenseText(text) {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .join("\n")
+    .trim();
+}
+
 export function javascriptNotices(licenseData, projectPackageName, fontNames, readLicenseText) {
   return Object.entries(licenseData).flatMap(([packageKey, metadata]) => {
     const separator = packageKey.lastIndexOf("@");
@@ -41,7 +49,7 @@ export function javascriptNotices(licenseData, projectPackageName, fontNames, re
     if (!metadata.licenseFile) {
       throw new Error(`No license file found for JavaScript dependency ${packageKey}`);
     }
-    const text = readLicenseText(metadata.licenseFile).trim();
+    const text = normalizeLicenseText(readLicenseText(metadata.licenseFile));
     if (!text) throw new Error(`Empty license file for JavaScript dependency ${packageKey}`);
     return [{
       name: fontNames.get(packageName) ?? packageName,

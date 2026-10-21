@@ -6,6 +6,7 @@ import {
   filterNotices,
   javascriptNotices,
   mergeNotices,
+  normalizeLicenseText,
   sortNotices,
   type Notice,
 } from "../../../../scripts/notices-data.mjs";
@@ -46,6 +47,12 @@ describe("notices helpers", () => {
     );
 
     expect(notices.map((notice) => notice.name)).toEqual(["react"]);
+  });
+
+  it("removes trailing whitespace from generated license text", () => {
+    expect(normalizeLicenseText("\nLicense line  \n  continued\t\n")).toBe(
+      "License line\n  continued",
+    );
   });
 
   it("sorts entries by name and filters on searchable metadata", () => {
