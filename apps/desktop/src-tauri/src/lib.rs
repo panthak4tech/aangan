@@ -214,6 +214,30 @@ mod tests {
     use std::path::Path;
 
     #[test]
+    fn opener_scope_allows_the_aangan_data_directory() {
+        let capability: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/default.json"))
+                .expect("valid capability config");
+        let open_path = capability["permissions"]
+            .as_array()
+            .and_then(|permissions| {
+                permissions
+                    .iter()
+                    .find(|permission| permission["identifier"] == "opener:allow-open-path")
+            })
+            .expect("open-path permission");
+        let allowed_paths: Vec<_> = open_path["allow"]
+            .as_array()
+            .expect("open-path allow-list")
+            .iter()
+            .filter_map(|entry| entry["path"].as_str())
+            .collect();
+
+        assert!(allowed_paths.contains(&"$LOCALDATA/Aangan"));
+        assert!(allowed_paths.contains(&"$LOCALDATA/Aangan/**"));
+    }
+
+    #[test]
     fn desktop_and_cli_binary_names_do_not_collide_on_windows() {
         let config: serde_json::Value =
             serde_json::from_str(include_str!("../tauri.conf.json")).expect("valid Tauri config");

@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import packageMetadata from "../../package.json";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   copyHardwareReport,
@@ -29,26 +30,29 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
 }));
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 
-vi.mock("@/api/api", () => ({
-  copyHardwareReport: vi.fn(),
-  getAppPaths: vi.fn(),
-  getCatalogInfo: vi.fn(),
-  recommendModels: vi.fn(),
-  refreshCatalog: vi.fn(),
-  resetCatalog: vi.fn(),
-  saveHardwareReport: vi.fn(),
-  scanHardware: vi.fn(),
-  setCatalogRefreshConsent: vi.fn(),
-  setSubscribedFamilies: vi.fn(),
-  APP_INFO: {
-    version: "0.2.0",
-    license: "MIT",
-    languages: [
-      { code: "en", available: true },
-      { code: "hi", available: false },
-    ],
-  },
-}));
+vi.mock("@/api/api", async () => {
+  const { default: metadata } = await import("../../package.json");
+  return {
+    copyHardwareReport: vi.fn(),
+    getAppPaths: vi.fn(),
+    getCatalogInfo: vi.fn(),
+    recommendModels: vi.fn(),
+    refreshCatalog: vi.fn(),
+    resetCatalog: vi.fn(),
+    saveHardwareReport: vi.fn(),
+    scanHardware: vi.fn(),
+    setCatalogRefreshConsent: vi.fn(),
+    setSubscribedFamilies: vi.fn(),
+    APP_INFO: {
+      version: metadata.version,
+      license: "MIT",
+      languages: [
+        { code: "en", available: true },
+        { code: "hi", available: false },
+      ],
+    },
+  };
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -449,6 +453,7 @@ describe("SettingsView and FirstRunWizard", () => {
     expect(screen.getByText(en.views.settings.privacy.title)).toBeInTheDocument();
     expect(screen.getByText(en.views.settings.catalog.source)).toBeInTheDocument();
     expect(screen.getByText(en.views.settings.language.options.hi)).toBeInTheDocument();
+    expect(screen.getByText(packageMetadata.version)).toBeInTheDocument();
     expect(screen.getByText(en.views.settings.about.notices)).toBeInTheDocument();
     expect(screen.getByText(en.views.settings.data.hint)).toBeInTheDocument();
 

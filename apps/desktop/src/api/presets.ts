@@ -1,3 +1,4 @@
+import packageMetadata from "../../package.json";
 import type { HardwareProfile, ModelSpec } from "./types";
 
 const GB = 1024 ** 3;
@@ -135,9 +136,8 @@ export const MODELS: ModelSpec[] = [
   spec("qwen2.5-72b-instruct-q4_k_m", "Qwen2.5 72B Instruct", 72.7, 44.4, 80, 8, 128, ["chat", "large"], apache, false),
 ];
 
-// Mock app info. In Tauri these come from package metadata.
 export const APP_INFO = {
-  version: "0.2.0",
+  version: packageMetadata.version,
   license: "MIT",
   languages: [
     { code: "en", available: true },
