@@ -13,6 +13,10 @@ export function mergeNotices(...sources) {
   return [...merged.values()];
 }
 
+export function noticeKey(notice) {
+  return `${notice.name}@${notice.version}@${notice.repository}`;
+}
+
 export function sortNotices(notices) {
   return [...notices].sort(
     (left, right) =>

@@ -7,6 +7,7 @@ import {
   javascriptNotices,
   mergeNotices,
   normalizeLicenseText,
+  noticeKey,
   sortNotices,
   type Notice,
 } from "../../../../scripts/notices-data.mjs";
@@ -67,6 +68,12 @@ describe("notices helpers", () => {
     expect(() =>
       mergeNotices([notices[0]], [{ ...notices[0], license: "Apache-2.0" }]),
     ).toThrow("Conflicting license notices for Zeta 1.0.0");
+  });
+
+  it("includes repository in notice keys when package versions are shared", () => {
+    expect(noticeKey(notices[0])).not.toBe(
+      noticeKey({ ...notices[0], repository: "https://example.com/other-zeta" }),
+    );
   });
 });
 
