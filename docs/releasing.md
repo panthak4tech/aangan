@@ -1,7 +1,7 @@
 # Releasing Aangan
 
-The `v0.3.0` release is a Windows x64 desktop release. The bundled CLI remains
-versioned independently from the desktop app.
+Releases are Windows x64 desktop releases. The bundled CLI remains versioned
+independently from the desktop app.
 
 ## Before tagging
 
@@ -28,8 +28,8 @@ versioned independently from the desktop app.
 After the version bump is merged, create and push the matching tag:
 
 ```powershell
-git tag -a v0.3.0 -m "Aangan v0.3.0"
-git push origin v0.3.0
+git tag -a v0.3.1 -m "Aangan v0.3.1"
+git push origin v0.3.1
 ```
 
 The `Release` workflow waits for approval on the protected `release`

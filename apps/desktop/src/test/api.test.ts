@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { MODELS, PRESETS } from "@/api/presets";
+import packageMetadata from "../../package.json";
+import { APP_INFO, MODELS, PRESETS } from "@/api/presets";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn() }));
@@ -20,6 +21,10 @@ afterEach(() => {
 });
 
 describe("browser API wrappers", () => {
+  it("uses the desktop package version for About metadata", () => {
+    expect(APP_INFO.version).toBe(packageMetadata.version);
+  });
+
   it("returns a cloned preset and clears unrequested bandwidth measurements", async () => {
     vi.useFakeTimers();
     const { scanHardware } = await import("@/api/api");
