@@ -1,0 +1,66 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  draft-release:
+    name: Build and draft Windows release
+    runs-on: windows-latest
+    environment: release
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - name: Verify tag matches desktop version
+        shell: pwsh
+        run: |
+          $tagVersion = $env:GITHUB_REF_NAME -replace '^v', ''
+          $desktopVersion = (Get-Content apps/desktop/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          if ($tagVersion -ne $desktopVersion) {
+            throw "Tag version $tagVersion does not match desktop version $desktopVersion."
+          }
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        run: npm ci
+      - name: Build Windows installer
+        working-directory: apps/desktop
+        run: npm run tauri build
+      - name: Create checksum
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          $installer = "target/release/bundle/nsis/Aangan_${version}_x64-setup.exe"
+          if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {
+            throw "Expected installer was not produced: $installer"
+          }
+          $hash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          $checksumFile = "target/release/bundle/nsis/SHA256SUMS.txt"
+          $checksum = "$hash  $([IO.Path]::GetFileName($installer))`n"
+          [IO.File]::WriteAllText($checksumFile, $checksum, [Text.UTF8Encoding]::new($false))
+      - name: Create draft GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          $installer = "target/release/bundle/nsis/Aangan_${version}_x64-setup.exe"
+          $checksums = "target/release/bundle/nsis/SHA256SUMS.txt"
+          gh release create $env:GITHUB_REF_NAME $installer $checksums `
+            --draft --verify-tag --generate-notes --title "Aangan $env:GITHUB_REF_NAME"
