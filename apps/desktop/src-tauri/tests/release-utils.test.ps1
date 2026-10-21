@@ -16,12 +16,16 @@ function Assert-Equal {
 function Assert-Throws {
   param(
     [string]$Name,
-    [scriptblock]$Action
+    [scriptblock]$Action,
+    [string]$ExpectedMessage
   )
 
   try {
     & $Action
   } catch {
+    if ($_.Exception.Message -notlike "*$ExpectedMessage*") {
+      throw "$Name failed with an unexpected error: $($_.Exception.Message)"
+    }
     return
   }
   throw "$Name should have failed."
@@ -29,16 +33,15 @@ function Assert-Throws {
 
 Assert-Equal "tag version extraction" (Get-ReleaseTagVersion -Tag "v0.3.0") "0.3.0"
 Assert-ReleaseVersion -Tag "v0.3.0" -DesktopVersion "0.3.0"
-
 Assert-Throws "mismatched release version" {
   Assert-ReleaseVersion -Tag "v0.3.0" -DesktopVersion "0.2.0"
-}
+} "does not match desktop version"
 Assert-Throws "invalid release tag" {
   Get-ReleaseTagVersion -Tag "v0.3"
-}
+} "vMAJOR.MINOR.PATCH"
 Assert-Throws "invalid desktop version" {
   Assert-ReleaseVersion -Tag "v0.3.0" -DesktopVersion "0.3"
-}
+} "Desktop version"
 
 $testDirectory = Join-Path ([IO.Path]::GetTempPath()) "aangan-release-test-$([Guid]::NewGuid())"
 New-Item -ItemType Directory -Path $testDirectory | Out-Null
@@ -56,7 +59,7 @@ try {
     Write-ReleaseChecksum `
       -InstallerPath (Join-Path $testDirectory "missing-installer.exe") `
       -ChecksumPath $checksumPath
-  }
+  } "Expected installer was not produced"
 } finally {
   Remove-Item -LiteralPath $testDirectory -Recurse -Force
 }
