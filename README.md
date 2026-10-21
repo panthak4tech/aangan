@@ -2,10 +2,8 @@
 
 Find out which open AI models your PC can run, and how fast, before you download anything.
 
-> Status: CLI v0.1; current desktop version v0.2.0. v0.3.0 is in preparation and awaits
-> maintainer review; it has not been released or tagged. Windows first. Offline by default:
-> only a user-approved catalog refresh contacts `raw.githubusercontent.com`, and no PC
-> information is sent.
+> Windows first. Offline by default: only a user-approved catalog refresh contacts
+> `raw.githubusercontent.com`, and no PC information is sent.
 
 ## Try it
 
