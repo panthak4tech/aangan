@@ -115,7 +115,7 @@ export const en = {
       subtitle: "A few preferences, nothing more.",
       privacy: {
         title: "Privacy",
-        body: "This release makes no network connections and collects no data. What Aangan reads on this PC stays on this PC.",
+        body: "Aangan works offline and collects no data. What it reads on this PC stays on this PC.",
       },
       data: {
         title: "Data",
@@ -139,6 +139,12 @@ export const en = {
         version: "Version",
         license: "License",
         notices: "Open-source notices",
+        noticesTitle: "Open-source notices",
+        noticesDescription: "Aangan is licensed under MIT. These are the licenses for Aangan and its third-party components.",
+        noticesSearch: "Search notices",
+        noticesEmpty: "No matching notices.",
+        loadingNotices: "Loading license notices",
+        showLicense: "Show full license text",
       },
     },
   },

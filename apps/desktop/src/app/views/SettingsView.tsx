@@ -1,6 +1,6 @@
 import { FolderOpen, Info, Languages, ShieldCheck } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { Suspense, lazy, useEffect, useState, type ReactNode } from "react";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { APP_INFO, getAppPaths } from "@/api/api";
 import type { AppPaths } from "@/api/types";
@@ -13,6 +13,12 @@ import { Skeleton } from "@/components/primitives/skeleton";
 import { useToast } from "@/components/ui/toast-provider";
 import { cn } from "@/lib/utils";
 import { en } from "@/i18n/en";
+
+const NoticesDialog = lazy(() =>
+  import("@/app/notices/NoticesDialog").then(({ NoticesDialog: Component }) => ({
+    default: Component,
+  })),
+);
 
 function SettingsSection({
   icon: Icon,
@@ -43,6 +49,7 @@ export function SettingsView() {
   const [pathsLoading, setPathsLoading] = useState(true);
   const [pathsError, setPathsError] = useState<string | null>(null);
   const [copyingPath, setCopyingPath] = useState(false);
+  const [noticesOpen, setNoticesOpen] = useState(false);
   const toast = useToast();
 
   useEffect(() => {
@@ -143,11 +150,19 @@ export function SettingsView() {
           <SpecRow label={t.about.version} value={APP_INFO.version} />
           <SpecRow label={t.about.license} value={APP_INFO.license} />
         </dl>
-        {/* Text only: the app is offline, so nothing opens when this is read. */}
-        <span className="w-fit select-all text-sm font-medium text-primary underline underline-offset-4">
+        <button
+          type="button"
+          className="w-fit text-sm font-medium text-primary underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={() => setNoticesOpen(true)}
+        >
           {t.about.notices}
-        </span>
+        </button>
       </SettingsSection>
+      {noticesOpen && (
+        <Suspense fallback={<p role="status">{t.about.loadingNotices}</p>}>
+          <NoticesDialog open onOpenChange={setNoticesOpen} />
+        </Suspense>
+      )}
     </section>
   );
 }
