@@ -4,6 +4,7 @@ import { NoticesDialog } from "@/app/notices/NoticesDialog";
 import { en } from "@/i18n/en";
 import {
   filterNotices,
+  javascriptNotices,
   mergeNotices,
   sortNotices,
   type Notice,
@@ -27,6 +28,26 @@ const notices: Notice[] = [
 ];
 
 describe("notices helpers", () => {
+  it("excludes the application package from third-party notices", () => {
+    const aanganPackage = { name: "desktop" };
+    const notices = javascriptNotices(
+      {
+        [`${aanganPackage.name}@0.2.0`]: { licenses: "UNLICENSED" },
+        "react@19.1.0": {
+          licenseFile: "react/LICENSE",
+          version: "19.1.0",
+          licenses: "MIT",
+          repository: "https://github.com/facebook/react",
+        },
+      },
+      aanganPackage.name,
+      new Map(),
+      () => "React license text",
+    );
+
+    expect(notices.map((notice) => notice.name)).toEqual(["react"]);
+  });
+
   it("sorts entries by name and filters on searchable metadata", () => {
     expect(sortNotices(notices).map((notice) => notice.name)).toEqual(["Alpha", "Zeta"]);
     expect(filterNotices(notices, "apache")).toEqual([notices[1]]);

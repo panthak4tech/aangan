@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { mergeNotices, sortNotices } from "./notices-data.mjs";
+import { javascriptNotices, mergeNotices, sortNotices } from "./notices-data.mjs";
 
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 const desktopDirectory = path.join(repositoryRoot, "apps", "desktop");
@@ -83,29 +83,6 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function javascriptNotices(licenseData, projectPackageName) {
-  return Object.entries(licenseData).flatMap(([packageKey, metadata]) => {
-    const separator = packageKey.lastIndexOf("@");
-    const packageName = separator > 0 ? packageKey.slice(0, separator) : packageKey;
-    if (packageName === projectPackageName) return [];
-    if (!metadata.licenseFile) {
-      throw new Error(`No license file found for JavaScript dependency ${packageKey}`);
-    }
-    const text = readFileSync(metadata.licenseFile, "utf8").trim();
-    if (!text) throw new Error(`Empty license file for JavaScript dependency ${packageKey}`);
-    return [{
-      name: fontNames.get(packageName) ?? packageName,
-      version: metadata.version ?? packageKey.slice(separator + 1),
-      license: metadata.licenses,
-      repository:
-        typeof metadata.repository === "string" && metadata.repository.length > 0
-          ? metadata.repository
-          : `https://www.npmjs.com/package/${encodeURIComponent(packageName)}`,
-      text,
-    }];
-  });
-}
-
 function renderMarkdown(notices) {
   const sections = notices.map(
     ({ name, version, license, repository, text }) =>
@@ -138,7 +115,12 @@ try {
   const notices = sortNotices(
     mergeNotices(
       rustNotices(cargoData),
-      javascriptNotices(licenseData, aanganPackage.name),
+      javascriptNotices(
+        licenseData,
+        aanganPackage.name,
+        fontNames,
+        (licenseFile) => readFileSync(licenseFile, "utf8"),
+      ),
       [ownLicense],
     ),
   );
