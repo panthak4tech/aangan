@@ -1,0 +1,5 @@
+catalog/*.json -text
+catalog/*.minisig -text -diff
+apps/desktop/src-tauri/tests/fixtures/* -text
+apps/desktop/src-tauri/tests/fixtures/*.minisig -diff
+apps/desktop/src-tauri/tests/fixtures/*.pub text eol=lf
