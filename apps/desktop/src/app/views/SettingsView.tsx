@@ -2,7 +2,7 @@ import { Database, FolderOpen, Info, Languages, ShieldCheck } from "lucide-react
 import type { LucideIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { openPath } from "@tauri-apps/plugin-opener";
-import { NoticesDialog } from "@/app/notices/NoticesDialog";
+import { AboutDialog } from "@/app/notices/NoticesDialog";
 import {
   APP_INFO,
   getAppPaths,
@@ -267,7 +267,7 @@ export function SettingsView() {
           {t.about.notices}
         </button>
       </SettingsSection>
-      <NoticesDialog open={noticesOpen} onOpenChange={setNoticesOpen} />
+      <AboutDialog open={noticesOpen} onOpenChange={setNoticesOpen} />
     </section>
   );
 }

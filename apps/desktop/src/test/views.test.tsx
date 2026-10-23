@@ -466,7 +466,7 @@ describe("SettingsView and FirstRunWizard", () => {
     expect(
       await screen.findByRole(
         "heading",
-        { name: en.views.settings.about.noticesTitle },
+        { name: "Aangan" },
         { timeout: 10_000 },
       ),
     ).toBeInTheDocument();

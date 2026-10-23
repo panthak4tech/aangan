@@ -1,6 +1,5 @@
-import { useMemo, useState } from "react";
-import notices from "@/assets/third-party-notices.json";
-import { Badge } from "@/components/primitives/badge";
+import { useToast } from "@/components/ui/toast-provider";
+import { Button } from "@/components/primitives/button";
 import {
   Dialog,
   DialogContent,
@@ -8,82 +7,75 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/primitives/dialog";
-import { Input } from "@/components/primitives/input";
+import licenseText from "../../../../../LICENSE?raw";
+import { openAanganRepository, openThirdPartyNotices } from "@/api/api";
 import { en } from "@/i18n/en";
-import {
-  filterNotices,
-  mergeNotices,
-  noticeKey,
-  sortNotices,
-} from "../../../../../scripts/notices-data.mjs";
+import { ABOUT } from "./aboutInfo";
+import { useAppVersion } from "./useAppVersion";
 
-const sortedNotices = sortNotices(mergeNotices(notices));
-const aanganLicense = sortedNotices.find((notice) => notice.name === "Aangan");
-const thirdPartyNotices = sortedNotices.filter((notice) => notice.name !== "Aangan");
-
-export function NoticesDialog({
+export function AboutDialog({
   open,
   onOpenChange,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const [query, setQuery] = useState("");
-  const visibleNotices = useMemo(() => filterNotices(thirdPartyNotices, query), [query]);
+  const version = useAppVersion();
+  const toast = useToast();
   const t = en.views.settings.about;
+
+  const openRepository = async () => {
+    try {
+      await openAanganRepository();
+    } catch (error) {
+      toast(t.openRepositoryFailed(errorMessage(error)), { variant: "destructive" });
+    }
+  };
+
+  const openNotices = async () => {
+    try {
+      await openThirdPartyNotices();
+    } catch (error) {
+      toast(t.openThirdPartyLicensesFailed(errorMessage(error)), { variant: "destructive" });
+    }
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] max-w-3xl grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden">
+      <DialogContent className="max-h-[85vh] max-w-3xl grid-rows-[auto_auto_minmax(0,1fr)_auto] overflow-hidden">
         <DialogHeader>
-          <DialogTitle>{t.noticesTitle}</DialogTitle>
-          <DialogDescription>{t.noticesDescription}</DialogDescription>
+          <DialogTitle>{ABOUT.name}</DialogTitle>
+          <DialogDescription>
+            {t.version} {version ?? "..."}
+          </DialogDescription>
         </DialogHeader>
-        <Input
-          type="search"
-          aria-label={t.noticesSearch}
-          placeholder={t.noticesSearch}
-          value={query}
-          onChange={(event) => setQuery(event.currentTarget.value)}
-        />
-        <div className="min-h-0 space-y-4 overflow-y-auto pr-1">
-          {aanganLicense && (
-            <section className="rounded-lg border border-border p-4">
-              <div className="mb-2 flex flex-wrap items-center gap-2">
-                <h3 className="font-semibold">{aanganLicense.name}</h3>
-                <Badge variant="secondary">{aanganLicense.version}</Badge>
-                <Badge variant="outline">{aanganLicense.license}</Badge>
-              </div>
-              <pre className="whitespace-pre-wrap break-words font-mono text-xs text-muted-foreground">
-                {aanganLicense.text}
-              </pre>
-            </section>
-          )}
-          {visibleNotices.length === 0 ? (
-            <p className="py-4 text-center text-sm text-muted-foreground">{t.noticesEmpty}</p>
-          ) : (
-            <ul className="space-y-3">
-              {visibleNotices.map((notice) => (
-                <li key={noticeKey(notice)} className="rounded-lg border border-border p-4">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="font-semibold">{notice.name}</h3>
-                    <Badge variant="secondary">{notice.version}</Badge>
-                    <Badge variant="outline">{notice.license}</Badge>
-                  </div>
-                  <details className="mt-3">
-                    <summary className="w-fit cursor-pointer text-sm font-medium text-primary">
-                      {t.showLicense}
-                    </summary>
-                    <pre className="mt-3 whitespace-pre-wrap break-words font-mono text-xs text-muted-foreground">
-                      {notice.text}
-                    </pre>
-                  </details>
-                </li>
-              ))}
-            </ul>
-          )}
+        <p className="text-sm text-muted-foreground">
+          {ABOUT.licenseName}. {ABOUT.modelsNote}
+        </p>
+        <pre className="min-h-0 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-border p-4 font-mono text-xs text-muted-foreground">
+          {licenseText}
+        </pre>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="link" asChild>
+            <a
+              href={ABOUT.repoUrl}
+              onClick={(event) => {
+                event.preventDefault();
+                void openRepository();
+              }}
+            >
+              {t.projectRepository}
+            </a>
+          </Button>
+          <Button variant="outline" onClick={() => void openNotices()}>
+            {t.openThirdPartyLicenses}
+          </Button>
         </div>
       </DialogContent>
     </Dialog>
   );
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

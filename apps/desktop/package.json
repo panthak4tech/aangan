@@ -14,7 +14,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:cov": "vitest run --coverage",
-    "notices": "node ../../scripts/generate-notices.mjs"
+    "notices": "node ../../scripts/generate-notices.mjs",
+    "notices:check": "node ../../scripts/generate-notices.mjs --check",
+    "notices:test": "node --test ../../scripts/generate-notices.test.mjs"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.3.0",

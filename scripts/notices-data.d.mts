@@ -18,6 +18,12 @@ export function noticeKey(notice: Notice): string;
 export function sortNotices(notices: Notice[]): Notice[];
 export function filterNotices(notices: Notice[], query: string): Notice[];
 export function normalizeLicenseText(text: string): string;
+export function normalizeLineEndings(text: string): string;
+export function excludeWorkspacePackages<T extends { package: { name: string } }>(
+  packages: T[],
+  workspacePackageNames: Set<string>,
+): T[];
+export function renderMarkdown(notices: Notice[]): string;
 export function javascriptNotices(
   licenseData: Record<string, JavaScriptLicenseMetadata>,
   projectPackageName: string,
