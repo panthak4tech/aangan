@@ -29,8 +29,43 @@
   --fit-wont-fg: #4A524D;
   --color-danger: #B3261E;
   --color-danger-soft: #FBE4E2;
+  --color-danger-fg: #FFFFFF;
 }
 
 :root[data-theme="dark"] {
-  /* TODO(night-mode): override tokens here */
+  color-scheme: dark;
+  --color-bg: #0D1912;
+  --color-bg-subtle: #112119;
+  --color-surface: #15271D;
+  --color-surface-muted: #1D3426;
+  --color-border: #27402F;
+  --color-border-strong: #3E6049;
+  --color-text: #E4F1E8;
+  --color-text-muted: #A3BCAB;
+
+  --color-primary: #3FBF7F;
+  --color-primary-hover: #5BD595;
+  --color-primary-fg: #04200F;
+  --color-primary-soft: #173F2A;
+  --color-primary-soft-fg: #BDEBD0;
+
+  --color-accent: #F0B84A;
+  --color-accent-fg: #3B2A00;
+  --color-accent-soft: #3A2D0B;
+  --color-accent-soft-fg: #F5D98B;
+
+  --fit-great-bg: #173F2A;
+  --fit-great-fg: #BDEBD0;
+  --fit-good-bg: #2B3A12;
+  --fit-good-fg: #D3E7A0;
+  --fit-slow-bg: #3D3108;
+  --fit-slow-fg: #F3D679;
+  --fit-tooslow-bg: #47210F;
+  --fit-tooslow-fg: #F6BE9E;
+  --fit-wont-bg: #252C28;
+  --fit-wont-fg: #B9C2BC;
+
+  --color-danger: #FF8F86;
+  --color-danger-soft: #3E1613;
+  --color-danger-fg: #2B0A08;
 }

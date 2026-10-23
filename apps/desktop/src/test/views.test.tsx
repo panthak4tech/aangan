@@ -472,6 +472,21 @@ describe("SettingsView and FirstRunWizard", () => {
     ).toBeInTheDocument();
   });
 
+  it("applies and persists appearance choices", () => {
+    window.localStorage.removeItem("aangan.theme");
+    document.documentElement.removeAttribute("data-theme");
+    render(<ToastProvider><SettingsView /></ToastProvider>);
+
+    expect(screen.getByText(en.views.settings.appearance.description)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: en.views.settings.appearance.options.dark }));
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(window.localStorage.getItem("aangan.theme")).toBe("dark");
+
+    fireEvent.click(screen.getByRole("radio", { name: en.views.settings.appearance.options.light }));
+    expect(document.documentElement.dataset.theme).toBe("light");
+    expect(window.localStorage.getItem("aangan.theme")).toBe("light");
+  });
+
   it("shows an explicit loading skeleton while reading the data path", () => {
     vi.mocked(getAppPaths).mockReturnValue(new Promise(() => {}));
     render(<ToastProvider><SettingsView /></ToastProvider>);
