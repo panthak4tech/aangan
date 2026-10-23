@@ -6,7 +6,7 @@ body:
     id: version
     attributes:
       label: Aangan version
-      placeholder: "0.2.0"
+      placeholder: "0.4.0"
     validations:
       required: true
   - type: textarea

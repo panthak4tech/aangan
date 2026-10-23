@@ -33,6 +33,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy, llvm-tools-preview
+      - name: Check versions match
+        run: node tools/check-version.mjs
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:
