@@ -1,4 +1,4 @@
-import { Database, FolderOpen, Info, Languages, ShieldCheck } from "lucide-react";
+import { Database, FolderOpen, Info, Languages, Monitor, ShieldCheck } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { openPath } from "@tauri-apps/plugin-opener";
@@ -22,6 +22,8 @@ import { Skeleton } from "@/components/primitives/skeleton";
 import { useToast } from "@/components/ui/toast-provider";
 import { cn } from "@/lib/utils";
 import { en } from "@/i18n/en";
+import { useTheme } from "@/theme/useTheme";
+import { isTheme } from "@/theme/theme";
 
 function SettingsSection({
   icon: Icon,
@@ -48,6 +50,7 @@ function SettingsSection({
 export function SettingsView() {
   const t = en.views.settings;
   const [lang, setLang] = useState<string>(APP_INFO.languages[0].code);
+  const [theme, setTheme] = useTheme();
   const [appPaths, setAppPaths] = useState<AppPaths | null>(null);
   const [pathsLoading, setPathsLoading] = useState(true);
   const [pathsError, setPathsError] = useState<string | null>(null);
@@ -248,6 +251,25 @@ export function SettingsView() {
                 {t.language.options[l.code]}
               </span>
               {!l.available && <Badge variant="unknown">{t.language.comingSoon}</Badge>}
+            </label>
+          ))}
+        </RadioGroup>
+      </SettingsSection>
+
+      <SettingsSection icon={Monitor} title={t.appearance.title}>
+        <p className="text-sm text-muted-foreground">{t.appearance.description}</p>
+        <RadioGroup
+          value={theme}
+          onValueChange={(value) => {
+            if (isTheme(value)) setTheme(value);
+          }}
+          className="gap-3"
+          aria-label={t.appearance.title}
+        >
+          {(["system", "light", "dark"] as const).map((option) => (
+            <label key={option} className="flex items-center gap-3 text-sm text-foreground">
+              <RadioGroupItem value={option} />
+              <span>{t.appearance.options[option]}</span>
             </label>
           ))}
         </RadioGroup>

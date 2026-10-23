@@ -1,12 +1,15 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import "./styles/tokens.css";
 import "@fontsource-variable/inter";
 import "@fontsource-variable/manrope";
 import "@fontsource-variable/jetbrains-mono";
 import "@fontsource-variable/noto-sans-devanagari";
 import "./styles.css";
 import App from "./App";
+import { initTheme } from "./theme/theme";
 
+initTheme();
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <App />

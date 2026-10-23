@@ -165,6 +165,11 @@ export const en = {
         comingSoon: "Coming soon",
         options: { en: "English", hi: "Hindi" },
       },
+      appearance: {
+        title: "Appearance",
+        description: "Choose how Aangan looks. System follows your Windows setting.",
+        options: { system: "System", light: "Light", dark: "Dark" },
+      },
       about: {
         title: "About",
         version: "Version",

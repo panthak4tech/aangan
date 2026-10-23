@@ -1,7 +1,6 @@
 @import "tailwindcss" source(none);
 @source "../src";
 @import "tw-animate-css";
-@import "./styles/tokens.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -94,7 +93,7 @@
   --accent-soft: var(--color-accent-soft);
   --accent-soft-foreground: var(--color-accent-soft-fg);
   --destructive: var(--color-danger);
-  --destructive-foreground: var(--color-bg);
+  --destructive-foreground: var(--color-danger-fg);
   --danger-soft: var(--color-danger-soft);
   --border: var(--color-border);
   --input: var(--color-border-strong);

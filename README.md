@@ -18,6 +18,9 @@ The desktop installer also bundles the CLI. If you select the optional
 current-user PATH setting during installation, run `aangan scan` and
 `aangan recommend` from any terminal.
 
+In the desktop app, choose **Settings → Appearance** to follow Windows or select
+Light or Dark mode.
+
 Speeds are **estimates** from published formulas in [docs/estimation.md](docs/estimation.md); real measured benchmarks are on the roadmap.
 
 ## Help wanted
