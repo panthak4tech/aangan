@@ -1,6 +1,6 @@
 [package]
 name = "aangan-desktop"
-version = "0.3.1"
+version.workspace = true
 description = "A Tauri App"
 authors = ["you"]
 edition = "2024"

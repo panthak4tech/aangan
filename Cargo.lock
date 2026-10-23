@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "aangan-cli"
-version = "0.1.0"
+version = "0.3.1"
 dependencies = [
  "aangan-types",
  "anyhow",
@@ -35,7 +35,7 @@ dependencies = [
 
 [[package]]
 name = "aangan-types"
-version = "0.1.0"
+version = "0.3.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -1223,7 +1223,7 @@ checksum = "aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484"
 
 [[package]]
 name = "fitcalc"
-version = "0.1.0"
+version = "0.3.1"
 dependencies = [
  "aangan-types",
  "serde",
@@ -1798,7 +1798,7 @@ checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 
 [[package]]
 name = "hwprobe"
-version = "0.1.0"
+version = "0.3.1"
 dependencies = [
  "aangan-types",
  "nvml-wrapper",
