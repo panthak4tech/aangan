@@ -35,6 +35,8 @@ jobs:
           components: rustfmt, clippy, llvm-tools-preview
       - name: Check versions match
         run: node tools/check-version.mjs
+      - name: Test version checker
+        run: node --test tools/check-version.test.mjs
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:
