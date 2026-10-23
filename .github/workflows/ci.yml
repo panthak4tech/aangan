@@ -81,6 +81,7 @@ jobs:
           cache: npm
           cache-dependency-path: apps/desktop/package-lock.json
       - run: npm ci
+      - run: npm run notices:test
       - run: npm run lint
       - run: npm run typecheck
       - name: Tests + coverage (thresholds live in vitest config and fail the job)

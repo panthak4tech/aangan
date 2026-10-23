@@ -88,6 +88,12 @@ describe("notices helpers", () => {
     expect(renderMarkdown([notices[0]])).toContain("## Zeta 1.0.0");
   });
 
+  it("chooses a Markdown fence longer than backtick runs in license text", () => {
+    const license = { ...notices[0], text: "Example:\n```\ncode\n```" };
+
+    expect(renderMarkdown([license])).toContain("````text\nExample:\n```\ncode\n```\n````");
+  });
+
   it("sorts entries by name and filters on searchable metadata", () => {
     expect(sortNotices(notices).map((notice) => notice.name)).toEqual(["Alpha", "Zeta"]);
     expect(filterNotices(notices, "apache")).toEqual([notices[1]]);

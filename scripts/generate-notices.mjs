@@ -2,7 +2,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   excludeWorkspacePackages,
   javascriptNotices,
@@ -16,9 +16,6 @@ import {
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 const desktopDirectory = path.join(repositoryRoot, "apps", "desktop");
 const noticesPath = path.join(repositoryRoot, "THIRD_PARTY_NOTICES.md");
-const checkMode = process.argv.includes("--check");
-const temporaryDirectory = mkdtempSync(path.join(os.tmpdir(), "aangan-notices-"));
-const rustOutputPath = path.join(temporaryDirectory, "rust-notices.json");
 const licenseCheckerPath = path.join(
   desktopDirectory,
   "node_modules",
@@ -33,7 +30,20 @@ const fontNames = new Map([
   ["@fontsource-variable/noto-sans-devanagari", "Noto Sans Devanagari"],
 ]);
 
-function runCargoAbout() {
+export const NOTICES_OUT_OF_DATE_MESSAGE =
+  "THIRD_PARTY_NOTICES.md is out of date. Run `npm run notices` in apps/desktop and commit.";
+
+export function checkNoticesFile(generated, filePath, reporters = console) {
+  const committed = readFileSync(filePath, "utf8");
+  if (normalizeLineEndings(generated) !== normalizeLineEndings(committed)) {
+    reporters.error(NOTICES_OUT_OF_DATE_MESSAGE);
+    return 1;
+  }
+  reporters.log("THIRD_PARTY_NOTICES.md is up to date.");
+  return 0;
+}
+
+function runCargoAbout(rustOutputPath) {
   const result = spawnSync(
     "cargo",
     [
@@ -105,41 +115,43 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-try {
-  runCargoAbout();
-  const cargoData = JSON.parse(readFileSync(rustOutputPath, "utf8"));
-  const licenseData = runLicenseChecker();
-  const aanganPackage = JSON.parse(
-    readFileSync(path.join(desktopDirectory, "package.json"), "utf8"),
-  );
-  const workspacePackages = getWorkspacePackages();
-  const notices = sortNotices(
-    mergeNotices(
-      rustNotices(cargoData, workspacePackages),
-      javascriptNotices(
-        licenseData,
-        aanganPackage.name,
-        fontNames,
-        (licenseFile) => readFileSync(licenseFile, "utf8"),
-      ),
-    ),
-  );
-  const generated = renderMarkdown(notices);
+function main() {
+  const checkMode = process.argv.includes("--check");
+  const temporaryDirectory = mkdtempSync(path.join(os.tmpdir(), "aangan-notices-"));
+  const rustOutputPath = path.join(temporaryDirectory, "rust-notices.json");
 
-  if (checkMode) {
-    const committed = readFileSync(noticesPath, "utf8");
-    if (normalizeLineEndings(generated) !== normalizeLineEndings(committed)) {
-      console.error(
-        "THIRD_PARTY_NOTICES.md is out of date. Run `npm run notices` in apps/desktop and commit.",
-      );
-      process.exitCode = 1;
+  try {
+    runCargoAbout(rustOutputPath);
+    const cargoData = JSON.parse(readFileSync(rustOutputPath, "utf8"));
+    const licenseData = runLicenseChecker();
+    const aanganPackage = JSON.parse(
+      readFileSync(path.join(desktopDirectory, "package.json"), "utf8"),
+    );
+    const workspacePackages = getWorkspacePackages();
+    const notices = sortNotices(
+      mergeNotices(
+        rustNotices(cargoData, workspacePackages),
+        javascriptNotices(
+          licenseData,
+          aanganPackage.name,
+          fontNames,
+          (licenseFile) => readFileSync(licenseFile, "utf8"),
+        ),
+      ),
+    );
+    const generated = renderMarkdown(notices);
+
+    if (checkMode) {
+      process.exitCode = checkNoticesFile(generated, noticesPath);
     } else {
-      console.log("THIRD_PARTY_NOTICES.md is up to date.");
+      writeFileSync(noticesPath, generated);
+      console.log(`Generated notices for ${notices.length} third-party components.`);
     }
-  } else {
-    writeFileSync(noticesPath, generated);
-    console.log(`Generated notices for ${notices.length} third-party components.`);
+  } finally {
+    rmSync(temporaryDirectory, { recursive: true, force: true });
   }
-} finally {
-  rmSync(temporaryDirectory, { recursive: true, force: true });
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
 }

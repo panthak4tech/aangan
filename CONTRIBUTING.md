@@ -52,7 +52,7 @@ list in the webview. Release CI verifies the committed file with
 project's npm dependencies:
 
 ```sh
-cargo install --locked --features cli cargo-about
+cargo install --locked --features cli --version 0.9.2 cargo-about
 cd apps/desktop
 npm run notices
 ```

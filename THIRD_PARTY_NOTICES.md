@@ -28729,7 +28729,7 @@ License: MIT
 
 Repository: https://github.com/theKashey/react-remove-scroll-bar
 
-```text
+````text
 <h1>react-remove-scroll-bar</h1>
 
 [![npm](https://img.shields.io/npm/v/react-remove-scroll-bar.svg)](https://www.npmjs.com/package/react-remove-scroll-bar)
@@ -28782,7 +28782,7 @@ There is a medium article about preventing the body scroll - [How to fight the <
 
 # License
 MIT
-```
+````
 ## react-style-singleton 2.2.3
 
 License: MIT

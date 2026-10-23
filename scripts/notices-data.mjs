@@ -55,8 +55,14 @@ export function excludeWorkspacePackages(packages, workspacePackageNames) {
 
 export function renderMarkdown(notices) {
   const sections = notices.map(
-    ({ name, version, license, repository, text }) =>
-      `## ${name} ${version}\n\nLicense: ${license}\n\nRepository: ${repository}\n\n\`\`\`text\n${text}\n\`\`\``,
+    ({ name, version, license, repository, text }) => {
+      const longestBacktickRun = Math.max(
+        0,
+        ...[...text.matchAll(/`+/g)].map(([run]) => run.length),
+      );
+      const fence = "`".repeat(Math.max(3, longestBacktickRun + 1));
+      return `## ${name} ${version}\n\nLicense: ${license}\n\nRepository: ${repository}\n\n${fence}text\n${text}\n${fence}`;
+    },
   );
   return [
     "# Third-party notices",
