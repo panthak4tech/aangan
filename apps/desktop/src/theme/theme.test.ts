@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_THEME,
   THEME_STORAGE_KEY,
@@ -9,6 +9,15 @@ import {
   resolveTheme,
   setTheme,
 } from "./theme";
+
+const tauriMocks = vi.hoisted(() => ({
+  isTauri: vi.fn<() => boolean>(),
+  getCurrentWindow: vi.fn<() => { setTheme: (theme: "light" | "dark" | null) => Promise<void> }>(),
+  setTheme: vi.fn<(theme: "light" | "dark" | null) => Promise<void>>(),
+}));
+
+vi.mock("@tauri-apps/api/core", () => ({ isTauri: tauriMocks.isTauri }));
+vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: tauriMocks.getCurrentWindow }));
 
 type ThemeChangeListener = (event: MediaQueryListEvent) => void;
 
@@ -35,6 +44,10 @@ function fakeWindow(initialDark: boolean) {
 const resolvedTheme = () => document.documentElement.dataset.theme;
 
 beforeEach(() => {
+  vi.clearAllMocks();
+  tauriMocks.isTauri.mockReturnValue(false);
+  tauriMocks.getCurrentWindow.mockReturnValue({ setTheme: tauriMocks.setTheme });
+  tauriMocks.setTheme.mockResolvedValue();
   document.documentElement.removeAttribute("data-theme");
   window.localStorage.clear();
 });
@@ -122,5 +135,34 @@ describe("setTheme", () => {
     setTheme("dark");
     expect(window.localStorage.getItem(THEME_STORAGE_KEY)).toBe("dark");
     expect(resolvedTheme()).toBe("dark");
+  });
+});
+
+describe("native window theme synchronization", () => {
+  it.each([
+    { theme: "light" as const, nativeTheme: "light" as const },
+    { theme: "dark" as const, nativeTheme: "dark" as const },
+    { theme: "system" as const, nativeTheme: null },
+  ])("maps $theme to the native $nativeTheme theme", async ({ theme, nativeTheme }) => {
+    tauriMocks.isTauri.mockReturnValue(true);
+
+    applyTheme(theme);
+
+    await vi.waitFor(() => expect(tauriMocks.setTheme).toHaveBeenCalledWith(nativeTheme));
+    expect(tauriMocks.getCurrentWindow).toHaveBeenCalledOnce();
+  });
+
+  it("logs native theme errors without throwing", async () => {
+    const error = new Error("native theme rejected");
+    tauriMocks.isTauri.mockReturnValue(true);
+    tauriMocks.setTheme.mockRejectedValue(error);
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    expect(() => applyTheme("dark")).not.toThrow();
+    await vi.waitFor(() =>
+      expect(errorLog).toHaveBeenCalledWith("Unable to sync the native window theme.", error),
+    );
+
+    errorLog.mockRestore();
   });
 });
