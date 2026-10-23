@@ -45,11 +45,34 @@ export function normalizeLicenseText(text) {
     .trim();
 }
 
+export function normalizeLineEndings(text) {
+  return text.replace(/\r\n?/g, "\n");
+}
+
+export function excludeWorkspacePackages(packages, workspacePackageNames) {
+  return packages.filter(({ package: crate }) => !workspacePackageNames.has(crate.name));
+}
+
+export function renderMarkdown(notices) {
+  const sections = notices.map(
+    ({ name, version, license, repository, text }) =>
+      `## ${name} ${version}\n\nLicense: ${license}\n\nRepository: ${repository}\n\n\`\`\`text\n${text}\n\`\`\``,
+  );
+  return [
+    "# Third-party notices",
+    "",
+    "Third-party notices. Components bundled in Aangan and their licenses. Aangan itself is MIT licensed (see LICENSE).",
+    "",
+    ...sections,
+    "",
+  ].join("\n");
+}
+
 export function javascriptNotices(licenseData, projectPackageName, fontNames, readLicenseText) {
   return Object.entries(licenseData).flatMap(([packageKey, metadata]) => {
     const separator = packageKey.lastIndexOf("@");
     const packageName = separator > 0 ? packageKey.slice(0, separator) : packageKey;
-    if (packageName === projectPackageName) return [];
+    if (packageName === projectPackageName || packageName === "desktop") return [];
     if (!metadata.licenseFile) {
       throw new Error(`No license file found for JavaScript dependency ${packageKey}`);
     }

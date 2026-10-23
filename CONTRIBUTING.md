@@ -45,8 +45,11 @@ your work is licensed under the MIT license.
 ## Dependency notices
 
 After changing Rust or production frontend dependencies, regenerate the
-committed license notices with `npm run notices` from `apps/desktop`. This
-requires the `cargo-about` CLI and the project's npm dependencies:
+committed `THIRD_PARTY_NOTICES.md` with `npm run notices` from `apps/desktop`.
+The app opens this bundled text file offline; it does not embed the dependency
+list in the webview. Release CI verifies the committed file with
+`npm run notices:check`. Regeneration requires the `cargo-about` CLI and the
+project's npm dependencies:
 
 ```sh
 cargo install --locked --features cli cargo-about

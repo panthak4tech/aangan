@@ -1,16 +1,25 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
-import { NoticesDialog } from "@/app/notices/NoticesDialog";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { getVersion } from "@tauri-apps/api/app";
+import { invoke } from "@tauri-apps/api/core";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { AboutDialog } from "@/app/notices/NoticesDialog";
+import { ToastProvider } from "@/components/ui/toast-provider";
 import { en } from "@/i18n/en";
 import {
+  excludeWorkspacePackages,
   filterNotices,
   javascriptNotices,
   mergeNotices,
+  normalizeLineEndings,
   normalizeLicenseText,
   noticeKey,
+  renderMarkdown,
   sortNotices,
   type Notice,
 } from "../../../../scripts/notices-data.mjs";
+
+vi.mock("@tauri-apps/api/app", () => ({ getVersion: vi.fn() }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
 const notices: Notice[] = [
   {
@@ -56,6 +65,29 @@ describe("notices helpers", () => {
     );
   });
 
+  it("normalizes line endings when comparing generated notices", () => {
+    expect(normalizeLineEndings("first\r\nsecond\rthird")).toBe("first\nsecond\nthird");
+  });
+
+  it("excludes every workspace Rust package from third-party notices", () => {
+    const packages = [
+      { package: { name: "aangan-cli" } },
+      { package: { name: "aangan-desktop" } },
+      { package: { name: "serde" } },
+    ];
+
+    expect(excludeWorkspacePackages(packages, new Set(["aangan-cli", "aangan-desktop"]))).toEqual([
+      packages[2],
+    ]);
+  });
+
+  it("renders only third-party notice components with the corrected intro", () => {
+    expect(renderMarkdown([notices[0]])).toContain(
+      "Third-party notices. Components bundled in Aangan and their licenses. Aangan itself is MIT licensed (see LICENSE).",
+    );
+    expect(renderMarkdown([notices[0]])).toContain("## Zeta 1.0.0");
+  });
+
   it("sorts entries by name and filters on searchable metadata", () => {
     expect(sortNotices(notices).map((notice) => notice.name)).toEqual(["Alpha", "Zeta"]);
     expect(filterNotices(notices, "apache")).toEqual([notices[1]]);
@@ -77,19 +109,45 @@ describe("notices helpers", () => {
   });
 });
 
-describe("NoticesDialog", () => {
-  it("filters notices and expands full license text as plain text", () => {
-    render(<NoticesDialog open onOpenChange={() => undefined} />);
-    const search = screen.getByRole("searchbox", { name: en.views.settings.about.noticesSearch });
-    fireEvent.change(search, { target: { value: "Manrope" } });
+describe("AboutDialog", () => {
+  beforeEach(() => {
+    vi.mocked(getVersion).mockResolvedValue("9.9.9");
+    vi.mocked(invoke).mockResolvedValue(undefined);
+  });
 
-    expect(screen.getByText("Manrope")).toBeInTheDocument();
-    expect(screen.queryByText("react")).not.toBeInTheDocument();
+  function renderAboutDialog() {
+    return render(
+      <ToastProvider>
+        <AboutDialog open onOpenChange={() => undefined} />
+      </ToastProvider>,
+    );
+  }
 
-    const licenseDetails = screen.getByText(en.views.settings.about.showLicense).closest("details");
-    expect(licenseDetails).not.toBeNull();
-    fireEvent.click(within(licenseDetails as HTMLElement).getByText(en.views.settings.about.showLicense));
-    expect(within(licenseDetails as HTMLElement).getByText(/SIL OPEN FONT LICENSE/)).toBeInTheDocument();
-    expect(licenseDetails?.querySelector("script")).not.toBeInTheDocument();
+  it("shows Aangan's current version and MIT license without dependency listings", async () => {
+    renderAboutDialog();
+
+    expect(await screen.findByText("Version 9.9.9")).toBeInTheDocument();
+    expect(screen.getAllByText(/MIT License/).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("list")).not.toBeInTheDocument();
+  });
+
+  it("opens third-party licenses through the Tauri command", async () => {
+    renderAboutDialog();
+    fireEvent.click(screen.getByRole("button", { name: en.views.settings.about.openThirdPartyLicenses }));
+
+    expect(invoke).toHaveBeenCalledWith("open_third_party_notices");
+  });
+
+  it("shows a toast when opening third-party licenses fails", async () => {
+    vi.mocked(invoke).mockRejectedValue(new Error("resource missing"));
+    renderAboutDialog();
+    fireEvent.click(screen.getByRole("button", { name: en.views.settings.about.openThirdPartyLicenses }));
+
+    expect(
+      await screen.findByText(
+        en.views.settings.about.openThirdPartyLicensesFailed("resource missing"),
+      ),
+    ).toBeInTheDocument();
   });
 });

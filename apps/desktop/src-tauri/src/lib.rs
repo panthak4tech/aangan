@@ -4,7 +4,8 @@ use hwprobe::{ProbeOptions, probe};
 use serde::Serialize;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use tauri::Manager;
+use tauri::{Manager, path::BaseDirectory};
+use tauri_plugin_opener::OpenerExt;
 
 mod catalog;
 
@@ -37,6 +38,32 @@ fn app_paths_for_existing_dir(data_dir: &Path) -> Result<AppPaths, String> {
 fn get_app_paths(app: tauri::AppHandle) -> Result<AppPaths, String> {
     let data_dir = app_data_dir(&app)?;
     app_paths_for_existing_dir(&data_dir)
+}
+
+fn validate_notices_file(path: &Path) -> Result<(), String> {
+    if !path.is_file() {
+        return Err("The third-party notices file was not found in this installation.".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn open_aangan_repository(app: tauri::AppHandle) -> Result<(), String> {
+    app.opener()
+        .open_url("https://github.com/panthak4tech/aangan", None::<&str>)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn open_third_party_notices(app: tauri::AppHandle) -> Result<(), String> {
+    let path = app
+        .path()
+        .resolve("legal/THIRD-PARTY-NOTICES.txt", BaseDirectory::Resource)
+        .map_err(|error| error.to_string())?;
+    validate_notices_file(&path)?;
+    app.opener()
+        .open_path(path.to_string_lossy().into_owned(), None::<&str>)
+        .map_err(|error| error.to_string())
 }
 
 fn app_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -182,6 +209,8 @@ pub fn run() -> Result<(), tauri::Error> {
             set_catalog_refresh_consent,
             reset_catalog,
             refresh_catalog,
+            open_aangan_repository,
+            open_third_party_notices,
             save_text_file,
             get_app_paths
         ])
@@ -209,9 +238,20 @@ pub fn run() -> Result<(), tauri::Error> {
 mod tests {
     use super::{
         MAX_TEXT_FILE_BYTES, app_data_dir_at, app_paths_for_existing_dir, save_text_file_blocking,
-        validate_save_request,
+        validate_notices_file, validate_save_request,
     };
     use std::path::Path;
+
+    #[test]
+    fn notices_file_validation_reports_missing_resource() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("THIRD-PARTY-NOTICES.txt");
+
+        assert_eq!(
+            validate_notices_file(&path),
+            Err("The third-party notices file was not found in this installation.".into())
+        );
+    }
 
     #[test]
     fn opener_scope_allows_the_aangan_data_directory() {

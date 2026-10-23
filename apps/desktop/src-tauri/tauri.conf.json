@@ -29,7 +29,10 @@
     "active": true,
     "targets": ["nsis"],
     "externalBin": ["binaries/aangan"],
-    "resources": ["cli-path.ps1"],
+    "resources": {
+      "cli-path.ps1": "cli-path.ps1",
+      "../../../THIRD_PARTY_NOTICES.md": "legal/THIRD-PARTY-NOTICES.txt"
+    },
     "windows": {
       "nsis": {
         "installMode": "currentUser",

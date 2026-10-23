@@ -56,6 +56,14 @@ export async function getAppPaths(): Promise<AppPaths> {
   return invoke<AppPaths>("get_app_paths");
 }
 
+export async function openAanganRepository(): Promise<void> {
+  return invoke<void>("open_aangan_repository");
+}
+
+export async function openThirdPartyNotices(): Promise<void> {
+  return invoke<void>("open_third_party_notices");
+}
+
 export async function getCatalogInfo(): Promise<CatalogInfo> {
   if (!inTauri) {
     const stored = window.localStorage.getItem("aangan.catalog.subscribedFamilies");

@@ -118,6 +118,20 @@ describe("browser API wrappers", () => {
     expect(invoke).toHaveBeenCalledWith("get_app_paths");
   });
 
+  it("opens the bundled third-party notices through Tauri", async () => {
+    const { openThirdPartyNotices } = await import("@/api/api");
+
+    await openThirdPartyNotices();
+    expect(invoke).toHaveBeenCalledWith("open_third_party_notices");
+  });
+
+  it("opens the Aangan repository through the Rust command", async () => {
+    const { openAanganRepository } = await import("@/api/api");
+
+    await openAanganRepository();
+    expect(invoke).toHaveBeenCalledWith("open_aangan_repository");
+  });
+
   it("uses browser storage for catalog preferences without refreshing over the webview", async () => {
     const {
       getCatalogInfo,
