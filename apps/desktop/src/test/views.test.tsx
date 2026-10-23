@@ -14,6 +14,7 @@ import {
   setCatalogRefreshConsent,
   setSubscribedFamilies,
 } from "@/api/api";
+import type { HardwareProfile } from "@/api/types";
 import { MODELS, PRESETS } from "@/api/presets";
 import { rankModels } from "@/api/estimate";
 import { en } from "@/i18n/en";
@@ -63,6 +64,7 @@ beforeEach(() => {
     subscribed_families: ["qwen2.5"],
     refresh_catalog_always_allowed: false,
     warning: null,
+    signature_verified: false,
   };
   vi.mocked(getCatalogInfo).mockResolvedValue(catalogInfo);
   vi.mocked(setSubscribedFamilies).mockImplementation(async (families) => ({
@@ -94,13 +96,19 @@ function renderScanView(profile = PRESETS.laptop8_cpu) {
   );
 }
 
+function renderModelsView(profile: HardwareProfile | null) {
+  return render(
+    <ToastProvider>
+      <TooltipProvider>
+        <ModelsView profile={profile} />
+      </TooltipProvider>
+    </ToastProvider>,
+  );
+}
+
 describe("ModelsView", () => {
   it("shows the scan-first empty state when no hardware profile exists", () => {
-    render(
-      <TooltipProvider>
-        <ModelsView profile={null} />
-      </TooltipProvider>,
-    );
+    renderModelsView(null);
 
     expect(screen.getByText(en.views.models.title)).toBeInTheDocument();
     expect(screen.getByText(en.views.models.empty)).toBeInTheDocument();
@@ -110,11 +118,7 @@ describe("ModelsView", () => {
     vi.mocked(recommendModels).mockResolvedValue(
       rankModels(PRESETS.desktop_3060, MODELS, 4096),
     );
-    render(
-      <TooltipProvider>
-        <ModelsView profile={PRESETS.desktop_3060} />
-      </TooltipProvider>,
-    );
+    renderModelsView(PRESETS.desktop_3060);
 
     expect(await screen.findByText("Qwen2.5 7B Instruct")).toBeInTheDocument();
     expect(screen.getByText(en.views.models.catalogSource)).toBeInTheDocument();
@@ -147,11 +151,7 @@ describe("ModelsView", () => {
         : { ...item, estimate: { ...item.estimate, fit: "too_slow" as const } },
     );
     vi.mocked(recommendModels).mockResolvedValue(recommendations);
-    const { unmount } = render(
-      <TooltipProvider>
-        <ModelsView profile={PRESETS.laptop8_cpu} />
-      </TooltipProvider>,
-    );
+    const { unmount } = renderModelsView(PRESETS.laptop8_cpu);
 
     expect(await screen.findByText(en.views.models.nothingFits.title)).toBeInTheDocument();
     expect(screen.queryByText(recommendations[0].model.name)).not.toBeInTheDocument();
@@ -168,11 +168,7 @@ describe("ModelsView", () => {
     expect(screen.getByText(/Needs .* — this PC's estimated usable system memory budget is .*\./)).toBeInTheDocument();
 
     unmount();
-    render(
-      <TooltipProvider>
-        <ModelsView profile={PRESETS.laptop8_cpu} />
-      </TooltipProvider>,
-    );
+    renderModelsView(PRESETS.laptop8_cpu);
     expect(await screen.findByRole("switch", { name: "Show models that won't fit (1)" })).toHaveAttribute(
       "aria-checked",
       "true",
@@ -186,11 +182,7 @@ describe("ModelsView", () => {
         estimate: { ...item.estimate, fit: "good" as const },
       })),
     );
-    render(
-      <TooltipProvider>
-        <ModelsView profile={PRESETS.desktop_3060} />
-      </TooltipProvider>,
-    );
+    renderModelsView(PRESETS.desktop_3060);
 
     expect(await screen.findByText(en.views.models.everyModelFits)).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: en.views.models.showWontFit })).toHaveAttribute(
@@ -203,11 +195,7 @@ describe("ModelsView", () => {
     vi.mocked(recommendModels)
       .mockRejectedValueOnce(new Error("ranking failed"))
       .mockResolvedValueOnce(rankModels(PRESETS.desktop_3060, MODELS, 4096));
-    render(
-      <TooltipProvider>
-        <ModelsView profile={PRESETS.desktop_3060} />
-      </TooltipProvider>,
-    );
+    renderModelsView(PRESETS.desktop_3060);
 
     expect(await screen.findByText(en.views.models.loadErrorTitle)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: en.views.models.retry }));
@@ -222,15 +210,12 @@ describe("ModelsView", () => {
       subscribed_families: [],
       refresh_catalog_always_allowed: false,
       warning: null,
+      signature_verified: false,
     });
     vi.mocked(recommendModels).mockResolvedValue(
       rankModels(PRESETS.desktop_3060, MODELS, 4096),
     );
-    render(
-      <TooltipProvider>
-        <ModelsView profile={PRESETS.desktop_3060} />
-      </TooltipProvider>,
-    );
+    renderModelsView(PRESETS.desktop_3060);
 
     expect(await screen.findByText(en.views.models.noSubscribedFamilies)).toBeInTheDocument();
     expect(screen.queryByText("Qwen2.5 7B Instruct")).not.toBeInTheDocument();
@@ -240,11 +225,7 @@ describe("ModelsView", () => {
     const recommendations = rankModels(PRESETS.desktop_3060, MODELS, 4096);
     recommendations[0].model.tags.push("gated");
     vi.mocked(recommendModels).mockResolvedValue(recommendations);
-    render(
-      <TooltipProvider>
-        <ModelsView profile={PRESETS.desktop_3060} />
-      </TooltipProvider>,
-    );
+    renderModelsView(PRESETS.desktop_3060);
 
     expect(await screen.findByText(en.views.models.gated)).toBeInTheDocument();
   });
@@ -253,11 +234,7 @@ describe("ModelsView", () => {
     vi.mocked(recommendModels).mockResolvedValue(
       rankModels(PRESETS.desktop_3060, MODELS, 4096),
     );
-    render(
-      <TooltipProvider>
-        <ModelsView profile={PRESETS.desktop_3060} />
-      </TooltipProvider>,
-    );
+    renderModelsView(PRESETS.desktop_3060);
 
     fireEvent.click(await screen.findByRole("button", { name: en.views.models.refreshCatalog }));
     expect(await screen.findByText(en.views.models.refreshConsentBody)).toBeInTheDocument();
@@ -272,11 +249,7 @@ describe("ModelsView", () => {
     vi.mocked(recommendModels).mockResolvedValue(
       rankModels(PRESETS.desktop_3060, MODELS, 4096),
     );
-    render(
-      <TooltipProvider>
-        <ModelsView profile={PRESETS.desktop_3060} />
-      </TooltipProvider>,
-    );
+    renderModelsView(PRESETS.desktop_3060);
 
     fireEvent.click(await screen.findByRole("button", { name: en.views.models.refreshCatalog }));
     fireEvent.click(await screen.findByRole("button", { name: en.views.models.alwaysAllowRefresh }));
@@ -292,17 +265,30 @@ describe("ModelsView", () => {
       rankModels(PRESETS.desktop_3060, MODELS, 4096),
     );
     vi.mocked(refreshCatalog).mockRejectedValueOnce(new Error("network unavailable"));
-    render(
-      <TooltipProvider>
-        <ModelsView profile={PRESETS.desktop_3060} />
-      </TooltipProvider>,
-    );
+    renderModelsView(PRESETS.desktop_3060);
 
     fireEvent.click(await screen.findByRole("button", { name: en.views.models.refreshCatalog }));
     fireEvent.click(screen.getByRole("button", { name: en.views.models.refreshOnce }));
     expect(
       await screen.findByText(en.views.models.refreshFailed("network unavailable")),
     ).toBeInTheDocument();
+  });
+
+  it.each([
+    ["catalog_signature:untrusted", en.views.models.signatureUntrusted],
+    ["catalog_signature:malformed", en.views.models.signatureMalformed],
+  ])("shows signature verification failures in a toast", async (error, message) => {
+    vi.mocked(recommendModels).mockResolvedValue(
+      rankModels(PRESETS.desktop_3060, MODELS, 4096),
+    );
+    vi.mocked(refreshCatalog).mockRejectedValueOnce(new Error(error));
+    renderModelsView(PRESETS.desktop_3060);
+
+    fireEvent.click(await screen.findByRole("button", { name: en.views.models.refreshCatalog }));
+    fireEvent.click(screen.getByRole("button", { name: en.views.models.refreshOnce }));
+
+    expect(await screen.findByText(message)).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(message);
   });
 
   it("keeps refresh success visible if catalog status cannot reload", async () => {
@@ -312,6 +298,7 @@ describe("ModelsView", () => {
       subscribed_families: ["qwen2.5"],
       refresh_catalog_always_allowed: false,
       warning: null,
+      signature_verified: false,
     };
     vi.mocked(getCatalogInfo)
       .mockResolvedValueOnce(catalogInfo)
@@ -319,11 +306,7 @@ describe("ModelsView", () => {
     vi.mocked(recommendModels).mockResolvedValue(
       rankModels(PRESETS.desktop_3060, MODELS, 4096),
     );
-    render(
-      <TooltipProvider>
-        <ModelsView profile={PRESETS.desktop_3060} />
-      </TooltipProvider>,
-    );
+    renderModelsView(PRESETS.desktop_3060);
 
     fireEvent.click(await screen.findByRole("button", { name: en.views.models.refreshCatalog }));
     fireEvent.click(screen.getByRole("button", { name: en.views.models.refreshOnce }));
@@ -469,6 +452,22 @@ describe("SettingsView and FirstRunWizard", () => {
         { name: "Aangan" },
         { timeout: 10_000 },
       ),
+    ).toBeInTheDocument();
+  });
+
+  it("labels an active refreshed catalog as signature-verified", async () => {
+    vi.mocked(getCatalogInfo).mockResolvedValue({
+      generated_at: "2026-10-22T13:30:00Z",
+      families: ["qwen2.5"],
+      subscribed_families: ["qwen2.5"],
+      refresh_catalog_always_allowed: false,
+      warning: null,
+      signature_verified: true,
+    });
+    render(<ToastProvider><SettingsView /></ToastProvider>);
+
+    expect(
+      await screen.findByText(/Catalog generated .*Signature: verified/),
     ).toBeInTheDocument();
   });
 

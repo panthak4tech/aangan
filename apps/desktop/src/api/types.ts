@@ -11,6 +11,7 @@ export interface CatalogInfo {
   subscribed_families: string[];
   refresh_catalog_always_allowed: boolean;
   warning: string | null;
+  signature_verified: boolean;
 }
 
 export interface CatalogRefreshResult {

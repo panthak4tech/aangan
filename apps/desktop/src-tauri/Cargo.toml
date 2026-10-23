@@ -29,6 +29,7 @@ aangan-types.workspace = true
 fitcalc.workspace = true
 hwprobe.workspace = true
 tempfile = "3"
+minisign-verify = "0.2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

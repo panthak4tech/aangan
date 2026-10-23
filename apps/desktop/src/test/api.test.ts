@@ -174,6 +174,7 @@ it("delegates scans and recommendations to Tauri when its runtime is present", a
       subscribed_families: ["qwen2.5"],
       refresh_catalog_always_allowed: true,
       warning: null,
+      signature_verified: false,
   };
   const refreshResult = {
     generated_at: info.generated_at,
