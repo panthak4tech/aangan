@@ -2,21 +2,39 @@
 
 Find out which open AI models your PC can run, and how fast, before you download anything.
 
-> Windows first. Offline by default: only a user-approved catalog refresh contacts
-> `raw.githubusercontent.com`, and no PC information is sent.
+> Windows-first desktop app and CLI. Offline by default: the optional **Refresh
+> catalog** action contacts `raw.githubusercontent.com` only with your permission;
+> no information about your PC is sent.
 
-## Try it
+## Install
 
-Download `aangan.exe` from Releases, then in PowerShell:
+Download the Windows installer from [Releases](https://github.com/panthak4tech/aangan/releases), run it, and open Aangan. The installer also bundles the CLI. Select the optional current-user PATH setting during installation to run `aangan` from any terminal, or use the executable directly:
 
 ```powershell
 .\aangan.exe scan
 .\aangan.exe recommend
 ```
 
-The desktop installer also bundles the CLI. If you select the optional
-current-user PATH setting during installation, run `aangan scan` and
-`aangan recommend` from any terminal.
+## Verifying your download
+
+Aangan's installer is **not code-signed yet**, so Windows SmartScreen or
+antivirus software may warn about it. Compare the installer's SHA-256 with
+`SHA256SUMS.txt` on the release page:
+
+```powershell
+$installer = Get-ChildItem .\Aangan_*_x64-setup.exe | Select-Object -First 1
+(Get-FileHash $installer.FullName -Algorithm SHA256).Hash
+```
+
+For releases built starting with v0.4.0, optionally verify its GitHub build
+provenance (requires the GitHub CLI):
+
+```powershell
+gh attestation verify $installer.FullName --repo panthak4tech/aangan
+```
+
+Release installers are built from this repository by GitHub Actions. See
+[SECURITY.md](SECURITY.md) for the security policy.
 
 In the desktop app, choose **Settings → Appearance** to follow Windows or select
 Light or Dark mode.
