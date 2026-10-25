@@ -52,6 +52,7 @@ mod tests {
     const SIGNATURE: &str = include_str!("../../tests/fixtures/catalog-signed.json.minisig");
     const TEST_KEY: &str = include_str!("../../tests/fixtures/catalog-test.pub");
     const OTHER_KEY: &str = include_str!("../../tests/fixtures/catalog-other.pub");
+    const OTHER_SIGNATURE: &str = include_str!("../../tests/fixtures/catalog-other.json.minisig");
 
     fn key(public_key_file: &str) -> String {
         public_key_file
@@ -81,6 +82,18 @@ mod tests {
         );
         assert_eq!(
             verify_catalog(JSON, SIGNATURE, &[&key(OTHER_KEY)]),
+            Err(SignatureError::Untrusted)
+        );
+    }
+
+    #[test]
+    fn accepts_a_valid_signature_from_a_key_outside_the_app_trust_set() {
+        assert_eq!(
+            verify_catalog(JSON, OTHER_SIGNATURE, &[&key(OTHER_KEY)]),
+            Ok(())
+        );
+        assert_eq!(
+            verify_catalog(JSON, OTHER_SIGNATURE, CATALOG_PUBLIC_KEYS),
             Err(SignatureError::Untrusted)
         );
     }

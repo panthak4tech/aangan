@@ -21,7 +21,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/catalog/sign.ps1
 ```
 
 The script signs the file with the local primary key and verifies the resulting
-signature against `catalog/aangan-catalog.pub`. Commit both
+signature against `catalog/aangan-catalog.pub`. Before signing, it rejects any
+public key not embedded in the desktop app's trusted key list. Commit both
 `catalog/models.v1.json` and `catalog/models.v1.json.minisig` in the same
 pull request, using `git commit -s`. CI rejects a missing or invalid signature.
 Do not use Minisign's legacy `-l` signature format.

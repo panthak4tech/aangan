@@ -6,6 +6,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+Import-Module (Join-Path $PSScriptRoot "sign-utils.psm1") -Force
+$signatureSourcePath = Join-Path $repoRoot "apps\desktop\src-tauri\src\catalog\signature.rs"
+$trustedPublicKeys = Get-AanganTrustedCatalogPublicKeys -SignatureSourcePath $signatureSourcePath
 $keyPath = if ([IO.Path]::IsPathRooted($Key)) {
   $Key
 } else {
@@ -17,6 +20,13 @@ $publicKeyPath = if ([IO.Path]::IsPathRooted($PublicKey)) {
   Join-Path $repoRoot $PublicKey
 }
 $publicKeyPath = (Resolve-Path -LiteralPath $publicKeyPath).Path
+$publicKeyLines = Get-Content -LiteralPath $publicKeyPath
+if ($publicKeyLines.Count -lt 2 -or $publicKeyLines[1] -notmatch "^RW") {
+  throw "Primary public key is missing or malformed: $publicKeyPath"
+}
+$publicKey = $publicKeyLines[1].Trim()
+Assert-AanganTrustedCatalogPublicKey -PublicKey $publicKey -TrustedKeys $trustedPublicKeys
+
 $filePath = if ([IO.Path]::IsPathRooted($File)) {
   $File
 } else {
@@ -47,12 +57,7 @@ if ($LASTEXITCODE -ne 0) {
   throw "Signing failed."
 }
 
-$publicKeyLines = Get-Content -LiteralPath $publicKeyPath
-if ($publicKeyLines.Count -lt 2 -or $publicKeyLines[1] -notmatch "^RW") {
-  throw "Primary public key is missing or malformed: $publicKeyPath"
-}
-
-& minisign -V -P $publicKeyLines[1].Trim() -m $filePath -x $signaturePath
+& minisign -V -P $publicKey -m $filePath -x $signaturePath
 if ($LASTEXITCODE -ne 0) {
   throw "Signature verification failed."
 }
