@@ -57,6 +57,18 @@ foreach ($actionReference in $actionReferences) {
     throw "Release workflow action is not pinned to a full commit SHA: $($actionReference.Value)"
   }
 }
+if ($releaseWorkflow -notmatch '(?m)^  id-token:\s*write\s*$') {
+  throw "Release workflow must grant id-token: write for provenance attestations."
+}
+if ($releaseWorkflow -notmatch '(?m)^  attestations:\s*write\s*$') {
+  throw "Release workflow must grant attestations: write for provenance attestations."
+}
+if ($releaseWorkflow -notmatch 'uses:\s*actions/attest-build-provenance@[0-9a-f]{40}') {
+  throw "Release workflow must use a SHA-pinned build provenance action."
+}
+if ($releaseWorkflow -notmatch '(?m)^\s+subject-path:\s*target/release/bundle/nsis/Aangan_\*_x64-setup\.exe\s*$') {
+  throw "Release workflow must attest the generated Windows installer."
+}
 
 $testDirectory = Join-Path ([IO.Path]::GetTempPath()) "aangan-release-test-$([Guid]::NewGuid())"
 New-Item -ItemType Directory -Path $testDirectory | Out-Null
