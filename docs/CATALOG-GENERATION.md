@@ -41,7 +41,12 @@ entry.
 
 The weekly GitHub Actions workflow can also be run manually from the Actions
 tab. It only proposes catalog changes; it does not sign or merge them. The
-default GitHub token does not trigger pull-request CI for its own generated
-pull request. A maintainer must run `tools/catalog/sign.ps1` on that branch,
-commit the refreshed catalog signature with `git commit -s`, and push the
-signed commit to trigger the required checks before merging.
+default `GITHUB_TOKEN` creates approval-required `pull_request` workflow runs
+when it opens or updates a pull request (`opened`, `synchronize`, or `reopened`
+events). A maintainer with write access can select **Approve workflows to run**
+in the pull request's merge box to start CI. See GitHub's
+[workflow triggering documentation](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow#triggering-a-workflow-from-a-workflow).
+
+Before merging, a maintainer must also run `tools/catalog/sign.ps1` on that
+branch, commit the refreshed catalog signature with `git commit -s`, and push
+the signed commit.

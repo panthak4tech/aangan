@@ -61,7 +61,7 @@ def _parse_yaml_scalar(raw: str, line_number: int) -> Any:
         try:
             return float(raw) if "." in raw else int(raw)
         except ValueError:
-            if any(character in raw for character in "[]{}\"'"):
+            if any(character in raw for character in "[]{}\"'#"):
                 raise CatalogBuildError(
                     f"source line {line_number}: use JSON quoting for strings and arrays"
                 )
@@ -496,8 +496,7 @@ def main() -> int:
     try:
         if args.check:
             catalog = json.loads(args.output.read_text(encoding="utf-8"))
-            schema = json.loads(args.schema.read_text(encoding="utf-8"))
-            _validate_schema_value(catalog, schema, schema, "$")
+            validate_catalog(catalog, args.schema)
             print(f"Catalog schema is valid: {args.output}")
             return 0
         sources = parse_sources(args.sources.read_text(encoding="utf-8"))
