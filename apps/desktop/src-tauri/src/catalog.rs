@@ -6,9 +6,13 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use std::{fs, io::Write};
 
+pub mod signature;
+use signature::{CATALOG_PUBLIC_KEYS, SignatureError, verify_catalog};
+
 pub const CATALOG_URL: &str =
     "https://raw.githubusercontent.com/panthak4tech/aangan/main/catalog/models.v1.json";
 const MAX_CATALOG_BYTES: usize = 5 * 1024 * 1024;
+const MAX_SIGNATURE_BYTES: usize = 4 * 1024;
 const MAX_MODELS: usize = 1000;
 const CATALOG_FILE: &str = "catalog-cache.v1.json";
 const SETTINGS_FILE: &str = "settings.json";
@@ -78,6 +82,13 @@ struct AppSettings {
 pub struct CatalogLoad {
     pub catalog: Catalog,
     pub warning: Option<String>,
+    pub signature_verified: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct SignedCatalogCache {
+    catalog_json: Vec<u8>,
+    signature: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -87,6 +98,7 @@ pub struct CatalogInfo {
     pub subscribed_families: Vec<String>,
     pub refresh_catalog_always_allowed: bool,
     pub warning: Option<String>,
+    pub signature_verified: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -395,36 +407,89 @@ pub fn model_specs(catalog: &Catalog) -> Vec<ModelSpec> {
 }
 
 pub fn load_catalog(data_dir: &Path, bundled_json: &str) -> Result<CatalogLoad, String> {
+    load_catalog_with_keys(data_dir, bundled_json, CATALOG_PUBLIC_KEYS)
+}
+
+fn load_catalog_with_keys(
+    data_dir: &Path,
+    bundled_json: &str,
+    keys: &[&str],
+) -> Result<CatalogLoad, String> {
     let bundled = validate_catalog_json(bundled_json.as_bytes())
         .map_err(|error| format!("bundled catalog is invalid: {error}"))?;
     let path = cache_path(data_dir);
     match fs::read(&path) {
-        Ok(bytes) => match validate_catalog_json(&bytes) {
-            Ok(cached) if cached.generated_at > bundled.generated_at => Ok(CatalogLoad {
-                catalog: cached,
-                warning: None,
-            }),
-            Ok(_) => Ok(CatalogLoad {
-                catalog: bundled,
-                warning: None,
-            }),
-            Err(error) => Ok(CatalogLoad {
-                catalog: bundled,
-                warning: Some(format!(
-                    "Cached catalog is invalid; using the bundled catalog. {error}"
+        Ok(bytes) => {
+            let cache: SignedCatalogCache = match serde_json::from_slice(&bytes) {
+                Ok(cache) => cache,
+                Err(error) => {
+                    return Ok(discard_invalid_cache(
+                        &path,
+                        bundled,
+                        format!("cached catalog data is invalid: {error}"),
+                    ));
+                }
+            };
+            if let Err(error) = verify_catalog(&cache.catalog_json, &cache.signature, keys) {
+                return Ok(discard_invalid_cache(
+                    &path,
+                    bundled,
+                    format!("cached catalog signature is invalid: {error}"),
+                ));
+            }
+            match validate_catalog_json(&cache.catalog_json) {
+                Ok(cached) if cached.generated_at > bundled.generated_at => Ok(CatalogLoad {
+                    catalog: cached,
+                    warning: None,
+                    signature_verified: true,
+                }),
+                Ok(_) => Ok(CatalogLoad {
+                    catalog: bundled,
+                    warning: None,
+                    signature_verified: false,
+                }),
+                Err(error) => Ok(discard_invalid_cache(
+                    &path,
+                    bundled,
+                    format!("cached catalog is invalid: {error}"),
                 )),
-            }),
-        },
+            }
+        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(CatalogLoad {
             catalog: bundled,
             warning: None,
+            signature_verified: false,
         }),
         Err(error) => Ok(CatalogLoad {
             catalog: bundled,
             warning: Some(format!(
                 "Cached catalog could not be read; using the bundled catalog. {error}"
             )),
+            signature_verified: false,
         }),
+    }
+}
+
+fn discard_invalid_cache(path: &Path, bundled: Catalog, reason: String) -> CatalogLoad {
+    let warning = match fs::remove_file(path) {
+        Ok(()) => {
+            eprintln!("{reason}; discarded the cache and using the bundled catalog.");
+            format!("Cached catalog was rejected; using the bundled catalog. {reason}")
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            format!("Cached catalog was rejected; using the bundled catalog. {reason}")
+        }
+        Err(error) => {
+            eprintln!("could not remove invalid catalog cache: {error}");
+            format!(
+                "Cached catalog was rejected; using the bundled catalog. {reason} Cache removal failed: {error}"
+            )
+        }
+    };
+    CatalogLoad {
+        catalog: bundled,
+        warning: Some(warning),
+        signature_verified: false,
     }
 }
 
@@ -471,6 +536,7 @@ pub fn catalog_info(data_dir: &Path, bundled_json: &str) -> Result<CatalogInfo, 
         subscribed_families,
         refresh_catalog_always_allowed: settings.refresh_catalog_always_allowed,
         warning: (!warnings.is_empty()).then(|| warnings.join(" ")),
+        signature_verified: loaded.signature_verified,
     })
 }
 
@@ -536,7 +602,14 @@ pub async fn refresh_catalog(
     let settings = load_settings(data_dir)?;
     ensure_refresh_consent(settings.refresh_catalog_always_allowed, consent_once)?;
     let client = catalog_client()?;
-    refresh_catalog_from(&client, CATALOG_URL, data_dir, bundled_json).await
+    refresh_catalog_with(
+        &client,
+        CATALOG_URL,
+        data_dir,
+        bundled_json,
+        CATALOG_PUBLIC_KEYS,
+    )
+    .await
 }
 
 fn catalog_client() -> Result<reqwest::Client, String> {
@@ -548,17 +621,18 @@ fn catalog_client() -> Result<reqwest::Client, String> {
         .map_err(|error| format!("could not configure catalog request: {error}"))
 }
 
-async fn refresh_catalog_from(
+pub async fn refresh_catalog_with(
     client: &reqwest::Client,
     url: &str,
     data_dir: &Path,
     bundled_json: &str,
+    keys: &[&str],
 ) -> Result<RefreshResult, String> {
     let parsed_url = Url::parse(url).map_err(|error| format!("catalog URL is invalid: {error}"))?;
-    if !is_allowed_catalog_url(&parsed_url) {
+    if !is_allowed_catalog_url(&parsed_url) && !is_local_test_catalog_url(&parsed_url) {
         return Err("catalog refresh URL is not allow-listed".to_string());
     }
-    refresh_from_url(client, parsed_url, data_dir, bundled_json).await
+    refresh_from_url(client, parsed_url, data_dir, bundled_json, keys).await
 }
 
 fn is_allowed_catalog_url(url: &Url) -> bool {
@@ -570,42 +644,55 @@ fn is_allowed_catalog_url(url: &Url) -> bool {
         && url.fragment().is_none()
 }
 
+#[cfg(test)]
+fn is_local_test_catalog_url(url: &Url) -> bool {
+    url.scheme() == "http"
+        && matches!(
+            url.host_str(),
+            Some("127.0.0.1") | Some("localhost") | Some("::1")
+        )
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.query().is_none()
+        && url.fragment().is_none()
+}
+
+#[cfg(not(test))]
+fn is_local_test_catalog_url(_url: &Url) -> bool {
+    false
+}
+
 async fn refresh_from_url(
     client: &reqwest::Client,
     url: Url,
     data_dir: &Path,
     bundled_json: &str,
+    keys: &[&str],
 ) -> Result<RefreshResult, String> {
-    let existing = load_catalog(data_dir, bundled_json)?;
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|error| format!("could not download catalog: {error}"))?;
-    if !response.status().is_success() {
-        return Err(format!(
-            "catalog server returned an unexpected status: {}",
-            response.status()
-        ));
-    }
-    if response
-        .content_length()
-        .is_some_and(|length| length > MAX_CATALOG_BYTES as u64)
-    {
-        return Err("catalog exceeds the 5 MiB limit".to_string());
-    }
-    let mut response = response;
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|error| format!("could not read catalog response: {error}"))?
-    {
-        if bytes.len().saturating_add(chunk.len()) > MAX_CATALOG_BYTES {
-            return Err("catalog exceeds the 5 MiB limit".to_string());
+    let existing = load_catalog_with_keys(data_dir, bundled_json, keys)?;
+    let mut signature_url = url.clone();
+    signature_url.set_path(&format!("{}.minisig", url.path()));
+    let signature_url = Url::parse(signature_url.as_str())
+        .map_err(|error| format!("catalog signature URL is invalid: {error}"))?;
+
+    let bytes = fetch_limited(client, &url, MAX_CATALOG_BYTES, "catalog").await?;
+    let signature_bytes = fetch_limited(
+        client,
+        &signature_url,
+        MAX_SIGNATURE_BYTES,
+        "catalog signature",
+    )
+    .await
+    .map_err(|error| {
+        if error.contains("unexpected status: 404") {
+            signature_error_message(SignatureError::Malformed)
+        } else {
+            error
         }
-        bytes.extend_from_slice(&chunk);
-    }
+    })?;
+    let signature = std::str::from_utf8(&signature_bytes)
+        .map_err(|_| signature_error_message(SignatureError::Malformed))?;
+    verify_catalog(&bytes, signature, keys).map_err(signature_error_message)?;
     let downloaded = validate_catalog_json(&bytes)?;
     if downloaded.generated_at <= existing.catalog.generated_at {
         return Ok(RefreshResult {
@@ -616,13 +703,64 @@ async fn refresh_from_url(
         });
     }
     let (added, updated) = catalog_diff(&existing.catalog, &downloaded);
-    write_atomic(&cache_path(data_dir), &bytes, "cached catalog")?;
+    let cache = SignedCatalogCache {
+        catalog_json: bytes,
+        signature: signature.to_string(),
+    };
+    let cache_bytes = serde_json::to_vec(&cache)
+        .map_err(|error| format!("could not encode signed catalog cache: {error}"))?;
+    write_atomic(&cache_path(data_dir), &cache_bytes, "cached catalog")?;
     Ok(RefreshResult {
         generated_at: downloaded.generated_at,
         model_count: downloaded.models.len(),
         added,
         updated,
     })
+}
+
+fn signature_error_message(error: SignatureError) -> String {
+    match error {
+        SignatureError::NoKeys => "catalog_signature:no_keys".to_string(),
+        SignatureError::Malformed => "catalog_signature:malformed".to_string(),
+        SignatureError::Untrusted => "catalog_signature:untrusted".to_string(),
+    }
+}
+
+async fn fetch_limited(
+    client: &reqwest::Client,
+    url: &Url,
+    max_bytes: usize,
+    label: &str,
+) -> Result<Vec<u8>, String> {
+    let mut response = client
+        .get(url.clone())
+        .send()
+        .await
+        .map_err(|error| format!("could not download {label}: {error}"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "{label} server returned an unexpected status: {}",
+            response.status()
+        ));
+    }
+    if response
+        .content_length()
+        .is_some_and(|length| length > max_bytes as u64)
+    {
+        return Err(format!("{label} exceeds the size limit"));
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| format!("could not read {label} response: {error}"))?
+    {
+        if bytes.len().saturating_add(chunk.len()) > max_bytes {
+            return Err(format!("{label} exceeds the size limit"));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
 }
 
 fn catalog_diff(previous: &Catalog, next: &Catalog) -> (usize, usize) {
@@ -697,6 +835,24 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     const BUNDLED: &str = include_str!("../../../../catalog/models.v1.json");
+    const SIGNED_CATALOG: &[u8] = include_bytes!("../tests/fixtures/catalog-signed.json");
+    const SIGNED_CATALOG_SIGNATURE: &str =
+        include_str!("../tests/fixtures/catalog-signed.json.minisig");
+    const OLDER_CATALOG: &[u8] = include_bytes!("../tests/fixtures/catalog-older.json");
+    const OLDER_CATALOG_SIGNATURE: &str =
+        include_str!("../tests/fixtures/catalog-older.json.minisig");
+    const OTHER_CATALOG_SIGNATURE: &str =
+        include_str!("../tests/fixtures/catalog-other.json.minisig");
+    const TEST_PUBLIC_KEY: &str = include_str!("../tests/fixtures/catalog-test.pub");
+
+    fn test_public_key() -> String {
+        TEST_PUBLIC_KEY
+            .lines()
+            .nth(1)
+            .expect("test public key file has a key line")
+            .trim()
+            .to_string()
+    }
 
     fn catalog_json() -> Value {
         serde_json::from_str(BUNDLED).expect("fixture catalog JSON")
@@ -804,6 +960,51 @@ mod tests {
         let loaded = load_catalog(directory.path(), BUNDLED).expect("bundled fallback");
         assert_eq!(loaded.catalog.generated_at, "2026-10-21T13:30:00Z");
         assert!(loaded.warning.is_some());
+        assert!(!cache_path(directory.path()).exists());
+    }
+
+    #[test]
+    fn bad_cache_signature_is_discarded_and_bundled_catalog_is_used() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let cache = SignedCatalogCache {
+            catalog_json: SIGNED_CATALOG.to_vec(),
+            signature: OTHER_CATALOG_SIGNATURE.to_string(),
+        };
+        fs::write(
+            cache_path(directory.path()),
+            serde_json::to_vec(&cache).expect("encode bad signed cache"),
+        )
+        .expect("write bad signed cache");
+        let test_key = test_public_key();
+
+        let loaded = load_catalog_with_keys(directory.path(), BUNDLED, &[&test_key])
+            .expect("bundled fallback");
+
+        assert_eq!(loaded.catalog.generated_at, "2026-10-21T13:30:00Z");
+        assert!(!loaded.signature_verified);
+        assert!(loaded.warning.unwrap().contains("signature is invalid"));
+        assert!(!cache_path(directory.path()).exists());
+    }
+
+    #[test]
+    fn verified_newer_cache_is_used_and_marked_verified() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let cache = SignedCatalogCache {
+            catalog_json: SIGNED_CATALOG.to_vec(),
+            signature: SIGNED_CATALOG_SIGNATURE.to_string(),
+        };
+        fs::write(
+            cache_path(directory.path()),
+            serde_json::to_vec(&cache).expect("encode signed cache"),
+        )
+        .expect("write signed cache");
+        let test_key = test_public_key();
+
+        let loaded = load_catalog_with_keys(directory.path(), BUNDLED, &[&test_key])
+            .expect("verified cache");
+
+        assert_eq!(loaded.catalog.generated_at, "2026-10-22T13:30:00Z");
+        assert!(loaded.signature_verified);
     }
 
     #[test]
@@ -888,11 +1089,12 @@ mod tests {
     #[tokio::test]
     async fn refresh_rejects_unallowlisted_url_before_requesting() {
         let directory = tempfile::tempdir().expect("temporary directory");
-        let error = refresh_catalog_from(
+        let error = refresh_catalog_with(
             &reqwest::Client::new(),
             "https://example.com/catalog.json",
             directory.path(),
             BUNDLED,
+            CATALOG_PUBLIC_KEYS,
         )
         .await
         .expect_err("unallowlisted host should be rejected");
@@ -915,6 +1117,7 @@ mod tests {
             url,
             directory.path(),
             BUNDLED,
+            CATALOG_PUBLIC_KEYS,
         )
         .await
         .expect_err("redirect response should not be followed");
@@ -925,40 +1128,171 @@ mod tests {
     #[tokio::test]
     async fn refresh_stores_newer_catalog_atomically_and_reports_diff() {
         let directory = tempfile::tempdir().expect("temporary directory");
-        let mut updated: Value = catalog_json();
-        updated["generated_at"] = Value::from("2026-10-22T13:30:00Z");
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/catalog.json"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(&updated))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(SIGNED_CATALOG))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/catalog.json.minisig"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(SIGNED_CATALOG_SIGNATURE))
             .mount(&server)
             .await;
 
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .expect("test client");
+        let client = catalog_client().expect("catalog client");
         let local_url =
             Url::parse(&format!("{}/catalog.json", server.uri())).expect("local mock server URL");
-        let result = refresh_from_url(&client, local_url, directory.path(), BUNDLED)
-            .await
-            .expect("refresh from local mock server");
+        let test_key = test_public_key();
+        let result = refresh_catalog_with(
+            &client,
+            local_url.as_str(),
+            directory.path(),
+            BUNDLED,
+            &[&test_key],
+        )
+        .await
+        .expect("refresh from local mock server");
         assert_eq!(result.model_count, 7);
         assert_eq!(result.added, 0);
         assert_eq!(result.updated, 0);
-        assert_eq!(
-            validate_catalog_json(&fs::read(cache_path(directory.path())).expect("cache"))
-                .expect("cached catalog")
-                .generated_at,
-            "2026-10-22T13:30:00Z"
-        );
+        let loaded = load_catalog_with_keys(directory.path(), BUNDLED, &[&test_key])
+            .expect("read newly cached catalog");
+        assert_eq!(loaded.catalog.generated_at, "2026-10-22T13:30:00Z");
+        assert!(loaded.signature_verified);
+    }
+
+    #[tokio::test]
+    async fn refresh_rejects_tampered_catalog_before_parsing() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let mut tampered = SIGNED_CATALOG.to_vec();
+        tampered[0] ^= 1;
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/catalog.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(tampered))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/catalog.json.minisig"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(SIGNED_CATALOG_SIGNATURE))
+            .mount(&server)
+            .await;
+        let test_key = test_public_key();
+        let url = format!("{}/catalog.json", server.uri());
+
+        let error = refresh_catalog_with(
+            &catalog_client().expect("catalog client"),
+            &url,
+            directory.path(),
+            BUNDLED,
+            &[&test_key],
+        )
+        .await
+        .expect_err("tampered JSON must fail signature verification");
+
+        assert_eq!(error, "catalog_signature:untrusted");
+        assert!(!cache_path(directory.path()).exists());
+    }
+
+    #[tokio::test]
+    async fn refresh_rejects_missing_signature() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/catalog.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(SIGNED_CATALOG))
+            .mount(&server)
+            .await;
+        let test_key = test_public_key();
+        let url = format!("{}/catalog.json", server.uri());
+
+        let error = refresh_catalog_with(
+            &catalog_client().expect("catalog client"),
+            &url,
+            directory.path(),
+            BUNDLED,
+            &[&test_key],
+        )
+        .await
+        .expect_err("missing signature must fail");
+
+        assert_eq!(error, "catalog_signature:malformed");
+        assert!(!cache_path(directory.path()).exists());
+    }
+
+    #[tokio::test]
+    async fn refresh_rejects_signature_from_another_key() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/catalog.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(SIGNED_CATALOG))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/catalog.json.minisig"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(OTHER_CATALOG_SIGNATURE))
+            .mount(&server)
+            .await;
+        let test_key = test_public_key();
+        let url = format!("{}/catalog.json", server.uri());
+
+        let error = refresh_catalog_with(
+            &catalog_client().expect("catalog client"),
+            &url,
+            directory.path(),
+            BUNDLED,
+            &[&test_key],
+        )
+        .await
+        .expect_err("untrusted key signature must fail");
+
+        assert_eq!(error, "catalog_signature:untrusted");
+        assert!(!cache_path(directory.path()).exists());
+    }
+
+    #[tokio::test]
+    async fn valid_but_older_catalog_is_ignored() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/catalog.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(OLDER_CATALOG))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/catalog.json.minisig"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(OLDER_CATALOG_SIGNATURE))
+            .mount(&server)
+            .await;
+        let test_key = test_public_key();
+        let url = format!("{}/catalog.json", server.uri());
+
+        let result = refresh_catalog_with(
+            &catalog_client().expect("catalog client"),
+            &url,
+            directory.path(),
+            BUNDLED,
+            &[&test_key],
+        )
+        .await
+        .expect("older signed catalog is valid but stale");
+
+        assert_eq!(result.generated_at, "2026-10-21T13:30:00Z");
+        assert_eq!(result.added, 0);
+        assert!(!cache_path(directory.path()).exists());
     }
 
     #[tokio::test]
     async fn oversized_response_keeps_existing_cache_unchanged() {
         let directory = tempfile::tempdir().expect("temporary directory");
-        let original = BUNDLED.as_bytes();
-        fs::write(cache_path(directory.path()), original).expect("write existing cache");
+        let original = SignedCatalogCache {
+            catalog_json: SIGNED_CATALOG.to_vec(),
+            signature: SIGNED_CATALOG_SIGNATURE.to_string(),
+        };
+        let original_bytes = serde_json::to_vec(&original).expect("encode existing cache");
+        fs::write(cache_path(directory.path()), &original_bytes).expect("write existing cache");
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/catalog.json"))
@@ -968,13 +1302,29 @@ mod tests {
             .mount(&server)
             .await;
         let url = Url::parse(&format!("{}/catalog.json", server.uri())).expect("mock URL");
-        let error = refresh_from_url(&reqwest::Client::new(), url, directory.path(), BUNDLED)
-            .await
-            .expect_err("oversize response should be rejected");
-        assert!(error.contains("5 MiB"));
+        let error = refresh_from_url(
+            &reqwest::Client::new(),
+            url,
+            directory.path(),
+            BUNDLED,
+            &[&test_public_key()],
+        )
+        .await
+        .expect_err("oversize response should be rejected");
+        assert!(error.contains("size limit"));
         assert_eq!(
             fs::read(cache_path(directory.path())).expect("cache remains"),
-            original
+            original_bytes
         );
+    }
+
+    #[test]
+    fn committed_catalog_has_a_valid_signature_from_a_trusted_key() {
+        let catalog_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../catalog");
+        let json = fs::read(catalog_dir.join("models.v1.json")).expect("bundled catalog");
+        let signature = fs::read_to_string(catalog_dir.join("models.v1.json.minisig"))
+            .expect("bundled catalog signature is missing");
+        verify_catalog(&json, &signature, CATALOG_PUBLIC_KEYS)
+            .expect("bundled catalog signature is invalid");
     }
 }

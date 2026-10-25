@@ -76,6 +76,7 @@ export async function getCatalogInfo(): Promise<CatalogInfo> {
       refresh_catalog_always_allowed:
         window.localStorage.getItem("aangan.catalog.refreshAlwaysAllowed") === "true",
       warning: null,
+      signature_verified: false,
     };
   }
   return invoke<CatalogInfo>("get_catalog_info");

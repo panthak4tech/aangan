@@ -1,0 +1,153 @@
+{
+  "schema": 1,
+  "generated_at": "2026-10-22T13:30:00Z",
+  "models": [
+    {
+      "id": "qwen2.5-0.5b-instruct",
+      "family": "qwen2.5",
+      "name": "Qwen2.5 0.5B Instruct",
+      "params_b": 0.49,
+      "arch": { "layers": 24, "kv_heads": 2, "head_dim": 64, "context_max": 32768 },
+      "license": { "spdx": "Apache-2.0", "kind": "open_source", "url": "https://www.apache.org/licenses/LICENSE-2.0" },
+      "gated": false,
+      "tags": ["chat", "tiny"],
+      "quants": [
+        {
+          "name": "Q4_K_M",
+          "file": "qwen2.5-0.5b-instruct-q4_k_m.gguf",
+          "size_bytes": 491400032,
+          "sha256": "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db",
+          "url": "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/9217f5db79a29953eb74d5343926648285ec7e67/qwen2.5-0.5b-instruct-q4_k_m.gguf"
+        }
+      ],
+      "verified": false,
+      "added_at": "2026-10-21"
+    },
+    {
+      "id": "qwen2.5-1.5b-instruct",
+      "family": "qwen2.5",
+      "name": "Qwen2.5 1.5B Instruct",
+      "params_b": 1.54,
+      "arch": { "layers": 28, "kv_heads": 2, "head_dim": 128, "context_max": 32768 },
+      "license": { "spdx": "Apache-2.0", "kind": "open_source", "url": "https://www.apache.org/licenses/LICENSE-2.0" },
+      "gated": false,
+      "tags": ["chat"],
+      "quants": [
+        {
+          "name": "Q4_K_M",
+          "file": "Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
+          "size_bytes": 986048768,
+          "sha256": "1adf0b11065d8ad2e8123ea110d1ec956dab4ab038eab665614adba04b6c3370",
+          "url": "https://huggingface.co/bartowski/Qwen2.5-1.5B-Instruct-GGUF/resolve/9eadc66189c7641e1ddd226b8267a9119b2ce2d4/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf"
+        }
+      ],
+      "verified": false,
+      "added_at": "2026-10-21"
+    },
+    {
+      "id": "qwen2.5-3b-instruct",
+      "family": "qwen2.5",
+      "name": "Qwen2.5 3B Instruct",
+      "params_b": 3.09,
+      "arch": { "layers": 36, "kv_heads": 2, "head_dim": 128, "context_max": 32768 },
+      "license": { "spdx": "LicenseRef-Qwen-Research", "kind": "open_weight", "url": "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct/blob/main/LICENSE" },
+      "gated": false,
+      "tags": ["chat"],
+      "quants": [
+        {
+          "name": "Q4_K_M",
+          "file": "Qwen2.5-3B-Instruct-Q4_K_M.gguf",
+          "size_bytes": 1929903264,
+          "sha256": "9c9f56a391a3abbd5b89d0245bf6106081bcc3173119d4229235dd9d23253f94",
+          "url": "https://huggingface.co/bartowski/Qwen2.5-3B-Instruct-GGUF/resolve/f302c64a2269a69fb27b2f9473b362f5bb8e78d8/Qwen2.5-3B-Instruct-Q4_K_M.gguf"
+        }
+      ],
+      "verified": false,
+      "added_at": "2026-10-21"
+    },
+    {
+      "id": "qwen2.5-7b-instruct",
+      "family": "qwen2.5",
+      "name": "Qwen2.5 7B Instruct",
+      "params_b": 7.61,
+      "arch": { "layers": 28, "kv_heads": 4, "head_dim": 128, "context_max": 32768 },
+      "license": { "spdx": "Apache-2.0", "kind": "open_source", "url": "https://www.apache.org/licenses/LICENSE-2.0" },
+      "gated": false,
+      "tags": ["chat", "coding"],
+      "quants": [
+        {
+          "name": "Q4_K_M",
+          "file": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+          "size_bytes": 4683074240,
+          "sha256": "65b8fcd92af6b4fefa935c625d1ac27ea29dcb6ee14589c55a8f115ceaaa1423",
+          "url": "https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/8911e8a47f92bac19d6f5c64a2e2095bd2f7d031/Qwen2.5-7B-Instruct-Q4_K_M.gguf"
+        }
+      ],
+      "verified": false,
+      "added_at": "2026-10-21"
+    },
+    {
+      "id": "qwen2.5-14b-instruct",
+      "family": "qwen2.5",
+      "name": "Qwen2.5 14B Instruct",
+      "params_b": 14.7,
+      "arch": { "layers": 48, "kv_heads": 8, "head_dim": 128, "context_max": 32768 },
+      "license": { "spdx": "Apache-2.0", "kind": "open_source", "url": "https://www.apache.org/licenses/LICENSE-2.0" },
+      "gated": false,
+      "tags": ["chat", "reasoning"],
+      "quants": [
+        {
+          "name": "Q4_K_M",
+          "file": "Qwen2.5-14B-Instruct-Q4_K_M.gguf",
+          "size_bytes": 8988110976,
+          "sha256": "e47ad95dad6ff848b431053b375adb5d39321290ea2c638682577dafca87c008",
+          "url": "https://huggingface.co/bartowski/Qwen2.5-14B-Instruct-GGUF/resolve/05244aa5d871c661c80082a15d3bce44714d068d/Qwen2.5-14B-Instruct-Q4_K_M.gguf"
+        }
+      ],
+      "verified": false,
+      "added_at": "2026-10-21"
+    },
+    {
+      "id": "qwen2.5-32b-instruct",
+      "family": "qwen2.5",
+      "name": "Qwen2.5 32B Instruct",
+      "params_b": 32.5,
+      "arch": { "layers": 64, "kv_heads": 8, "head_dim": 128, "context_max": 32768 },
+      "license": { "spdx": "Apache-2.0", "kind": "open_source", "url": "https://www.apache.org/licenses/LICENSE-2.0" },
+      "gated": false,
+      "tags": ["chat", "large"],
+      "quants": [
+        {
+          "name": "Q4_K_M",
+          "file": "Qwen2.5-32B-Instruct-Q4_K_M.gguf",
+          "size_bytes": 19851336576,
+          "sha256": "2e5f6daea180dbc59f65a40641e94d3973b5dbaa32b3c0acf54647fa874e519e",
+          "url": "https://huggingface.co/bartowski/Qwen2.5-32B-Instruct-GGUF/resolve/2116cbb385b8ce3a4d28cf3bf1cd2039a55821a6/Qwen2.5-32B-Instruct-Q4_K_M.gguf"
+        }
+      ],
+      "verified": false,
+      "added_at": "2026-10-21"
+    },
+    {
+      "id": "qwen2.5-72b-instruct",
+      "family": "qwen2.5",
+      "name": "Qwen2.5 72B Instruct",
+      "params_b": 72.7,
+      "arch": { "layers": 80, "kv_heads": 8, "head_dim": 128, "context_max": 32768 },
+      "license": { "spdx": "LicenseRef-Qwen", "kind": "open_weight", "url": "https://huggingface.co/Qwen/Qwen2.5-72B-Instruct/blob/main/LICENSE" },
+      "gated": false,
+      "tags": ["chat", "large"],
+      "quants": [
+        {
+          "name": "Q4_K_M",
+          "file": "Qwen2.5-72B-Instruct-Q4_K_M.gguf",
+          "size_bytes": 47415715488,
+          "sha256": "e4c8fad16946be8cf0bbf67eb8f4e18fc7415a5a6d2854b4cda453edb4082545",
+          "url": "https://huggingface.co/bartowski/Qwen2.5-72B-Instruct-GGUF/resolve/d43fd973131bce821f41e2df3c78c6fe15c5627a/Qwen2.5-72B-Instruct-Q4_K_M.gguf"
+        }
+      ],
+      "verified": false,
+      "added_at": "2026-10-21"
+    }
+  ]
+}

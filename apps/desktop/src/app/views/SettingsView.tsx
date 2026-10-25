@@ -203,6 +203,7 @@ export function SettingsView() {
           <>
             <p className="text-sm text-muted-foreground">
               {t.catalog.updated(formatCatalogDate(catalogInfo.generated_at))}
+              {catalogInfo.signature_verified && ` · ${t.catalog.signatureVerified}`}
             </p>
             {catalogInfo.warning && (
               <p role="alert" className="text-sm text-destructive">{catalogInfo.warning}</p>

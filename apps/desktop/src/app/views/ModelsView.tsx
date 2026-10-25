@@ -22,6 +22,7 @@ import { Input } from "@/components/primitives/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/primitives/select";
 import { Skeleton } from "@/components/primitives/skeleton";
 import { Switch } from "@/components/primitives/switch";
+import { useToast } from "@/components/ui/toast-provider";
 import { en } from "@/i18n/en";
 import { ModelCard } from "../models/ModelCard";
 import { CONTEXT_OPTIONS, filterRecs, nothingFitsComfortably } from "../models/fit";
@@ -51,6 +52,7 @@ export function ModelsView({ profile, onOpenModel }: Props) {
   const [consentOpen, setConsentOpen] = useState(false);
   const [refreshNotice, setRefreshNotice] = useState<string | null>(null);
   const [refreshError, setRefreshError] = useState<string | null>(null);
+  const toast = useToast();
 
   useEffect(() => {
     let live = true;
@@ -108,7 +110,14 @@ export function ModelsView({ profile, onOpenModel }: Props) {
         setCatalogError(errorMessage(reason));
       }
     } catch (reason) {
-      setRefreshError(t.refreshFailed(errorMessage(reason)));
+      const message = errorMessage(reason);
+      if (message === "catalog_signature:untrusted") {
+        toast(t.signatureUntrusted, { variant: "destructive" });
+      } else if (message === "catalog_signature:malformed") {
+        toast(t.signatureMalformed, { variant: "destructive" });
+      } else {
+        setRefreshError(t.refreshFailed(message));
+      }
     } finally {
       setRefreshing(false);
       setConsentOpen(false);
