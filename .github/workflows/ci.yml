@@ -55,13 +55,13 @@ jobs:
         run: cargo llvm-cov report --summary-only --ignore-filename-regex "$COV_IGNORE" >> "$GITHUB_STEP_SUMMARY"
       - name: Coverage floor for core crates
         run: cargo llvm-cov -p fitcalc -p aangan-types --locked --fail-under-lines "$RUST_CORE_MIN_LINES"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: rust-lcov
           path: lcov.info
       - name: Build release CLI
         run: cargo build --release -p aangan-cli --locked
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: aangan-windows-x64
           path: target/release/aangan.exe
@@ -87,7 +87,7 @@ jobs:
       - name: Tests + coverage (thresholds live in vitest config and fail the job)
         run: npm run test:cov
       - run: npm run build
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: frontend-coverage
           path: apps/desktop/coverage
