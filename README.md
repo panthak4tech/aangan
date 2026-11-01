@@ -2,9 +2,9 @@
 
 Find out which open AI models your PC can run, and how fast, before you download anything.
 
-> Windows-first desktop app and CLI. Offline by default: the optional **Refresh
-> catalog** action contacts `raw.githubusercontent.com` only with your permission;
-> no information about your PC is sent.
+> Status: desktop app and CLI v0.4.0. Windows first. Offline by default: your
+> hardware details never leave your PC. The optional **Refresh catalog** action
+> contacts `raw.githubusercontent.com` only with your permission.
 
 ## Install
 
