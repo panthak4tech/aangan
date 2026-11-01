@@ -6,3 +6,8 @@ apps/desktop/src-tauri/binaries/
 *.log
 .env
 .DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.venv*/

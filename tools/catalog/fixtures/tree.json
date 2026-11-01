@@ -1,0 +1,42 @@
+[
+  {
+    "path": "model-Q4_K_M.gguf",
+    "size": 492000000,
+    "lfs": {
+      "oid": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "size": 492000000
+    }
+  },
+  {
+    "path": "model-Q5_K_M.gguf",
+    "size": 575000000,
+    "lfs": {
+      "oid": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "size": 575000000
+    }
+  },
+  {
+    "path": "model-Q8_0.gguf",
+    "size": 850000000,
+    "lfs": {
+      "oid": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "size": 850000000
+    }
+  },
+  {
+    "path": "model-Q4_K_S.gguf",
+    "size": 300000000,
+    "lfs": {
+      "oid": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "size": 300000000
+    }
+  },
+  {
+    "path": "model-Q4_K_M-00001-of-00002.gguf",
+    "size": 200000000,
+    "lfs": {
+      "oid": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "size": 200000000
+    }
+  }
+]
