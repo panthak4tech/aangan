@@ -28,8 +28,8 @@ independently from the desktop app.
 After the version bump is merged, create and push the matching tag:
 
 ```powershell
-git tag -a v0.3.1 -m "Aangan v0.3.1"
-git push origin v0.3.1
+git tag -a v0.4.0 -m "Aangan v0.4.0"
+git push origin v0.4.0
 ```
 
 The `Release` workflow waits for approval on the protected `release`
