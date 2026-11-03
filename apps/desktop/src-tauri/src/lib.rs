@@ -88,9 +88,11 @@ fn app_data_dir_at(local_data_dir: &Path, legacy_data_dir: &Path) -> Result<Path
 
 #[tauri::command]
 async fn scan_hardware(measure_bandwidth: bool) -> Result<HardwareProfile, String> {
-    tauri::async_runtime::spawn_blocking(move || probe(&ProbeOptions { measure_bandwidth }))
-        .await
-        .map_err(|error| error.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        probe(&ProbeOptions { measure_bandwidth }).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]

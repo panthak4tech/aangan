@@ -51,7 +51,8 @@ fn main() -> Result<()> {
         Command::Scan { json, no_bench } => {
             let profile = probe(&ProbeOptions {
                 measure_bandwidth: !no_bench,
-            });
+            })
+            .context("probing hardware")?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&profile)?);
             } else {
@@ -73,7 +74,8 @@ fn main() -> Result<()> {
                 }
                 None => probe(&ProbeOptions {
                     measure_bandwidth: !no_bench,
-                }),
+                })
+                .context("probing hardware")?,
             };
             let recommendations = recommendations_for(&profile, context, all);
             if json {
