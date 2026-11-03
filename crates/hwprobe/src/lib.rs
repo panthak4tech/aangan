@@ -18,8 +18,8 @@ impl Default for ProbeOptions {
     }
 }
 
-pub fn probe(opts: &ProbeOptions) -> HardwareProfile {
-    let sys = System::new_all();
+pub fn probe(opts: &ProbeOptions) -> Result<HardwareProfile, sysinfo::Error> {
+    let sys = System::new_all()?;
     let cpus = sys.cpus();
 
     let (read_bandwidth_gbps, bandwidth_source) = if opts.measure_bandwidth {
@@ -31,15 +31,13 @@ pub fn probe(opts: &ProbeOptions) -> HardwareProfile {
         (None, "skipped")
     };
 
-    let disks = Disks::new_with_refreshed_list();
+    let disks = Disks::new_with_refreshed_list()?;
 
-    HardwareProfile {
+    Ok(HardwareProfile {
         schema_version: SCHEMA_VERSION,
         os: OsInfo {
-            name: System::name().unwrap_or_else(|| "unknown".into()),
-            version: System::long_os_version()
-                .or_else(System::os_version)
-                .unwrap_or_default(),
+            name: System::name()?,
+            version: System::long_os_version().or_else(|_| System::os_version())?,
             arch: std::env::consts::ARCH.to_string(),
         },
         cpu: CpuInfo {
@@ -47,7 +45,7 @@ pub fn probe(opts: &ProbeOptions) -> HardwareProfile {
                 .first()
                 .map(|cpu| cpu.brand().trim().to_string())
                 .unwrap_or_default(),
-            physical_cores: System::physical_core_count().unwrap_or(cpus.len()) as u32,
+            physical_cores: System::physical_core_count()? as u32,
             logical_cores: cpus.len() as u32,
             features: cpu_features(),
         },
@@ -59,7 +57,6 @@ pub fn probe(opts: &ProbeOptions) -> HardwareProfile {
         },
         gpus: gpu::probe_gpus(),
         disks: disks
-            .list()
             .iter()
             .map(|disk| DiskInfo {
                 mount: disk.mount_point().display().to_string(),
@@ -67,7 +64,7 @@ pub fn probe(opts: &ProbeOptions) -> HardwareProfile {
                 available_bytes: disk.available_space(),
             })
             .collect(),
-    }
+    })
 }
 
 fn cpu_features() -> Vec<String> {
@@ -103,7 +100,8 @@ mod tests {
     fn probes_hardware_and_respects_skipped_bandwidth_option() {
         let profile = probe(&ProbeOptions {
             measure_bandwidth: false,
-        });
+        })
+        .expect("hardware probe should succeed");
 
         assert_eq!(profile.schema_version, SCHEMA_VERSION);
         assert_eq!(profile.memory.read_bandwidth_gbps, None);
