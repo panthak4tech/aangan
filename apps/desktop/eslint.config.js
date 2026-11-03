@@ -22,6 +22,9 @@ export default [
         babelOptions: {
           babelrc: false,
           configFile: false,
+          parserOpts: {
+            plugins: ["typescript", "jsx"],
+          },
           presets: [
             ["@babel/preset-env", { targets: { esmodules: true } }],
             ["@babel/preset-react", { runtime: "automatic" }],
