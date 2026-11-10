@@ -61,7 +61,7 @@
     "@vitest/coverage-v8": "^5.1.0",
     "eslint": "^10.14.0",
     "globals": "^16.0.0",
-    "jsdom": "^26.0.0",
+    "jsdom": "^31.0.0",
     "license-checker-rseidelsohn": "^5.0.1",
     "typescript": "~7.0.2",
     "vite": "^8.3.6",
