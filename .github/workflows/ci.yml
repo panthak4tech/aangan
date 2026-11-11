@@ -144,7 +144,7 @@ jobs:
       - name: Validate committed catalog
         run: python tools/catalog/build_catalog.py --check
       - name: Test catalog builder
-        run: python -m pytest tools/catalog/test_build_catalog.py
+        run: python -m pytest tools/catalog/test_build_catalog.py tools/catalog/test_verify_catalog.py
 
   ci-required:
     name: ci-required

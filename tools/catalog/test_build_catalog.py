@@ -12,6 +12,7 @@ import requests
 from build_catalog import (
     CatalogBuildError,
     HuggingFaceApi,
+    build_model,
     build_catalog,
     discover_new_repos,
     main,
@@ -60,6 +61,52 @@ class SourceManifestTests(unittest.TestCase):
 
         with self.assertRaisesRegex(CatalogBuildError, "gated: false"):
             parse_sources(manifest.replace("gated: false", "gated: true"))
+
+    def test_architecture_overrides_are_optional_and_validated(self):
+        manifest = SOURCE_MANIFEST.replace(
+            "    verified: false",
+            '    arch_overrides: {"head_dim": 160, "context_max": 1024000}\n'
+            "    verified: false",
+        )
+        parsed = parse_sources(manifest)
+        self.assertEqual(
+            parsed[0]["arch_overrides"],
+            {"head_dim": 160, "context_max": 1024000},
+        )
+
+        for invalid in ('{"unknown": 160}', '{"head_dim": true}', "{}"):
+            with self.subTest(invalid=invalid):
+                bad_manifest = manifest.replace(
+                    '{"head_dim": 160, "context_max": 1024000}',
+                    invalid,
+                )
+                with self.assertRaisesRegex(CatalogBuildError, "arch_overrides"):
+                    parse_sources(bad_manifest)
+
+    def test_architecture_overrides_replace_config_values(self):
+        manifest = SOURCE_MANIFEST.replace(
+            "    verified: false",
+            '    arch_overrides: {"head_dim": 160, "context_max": 1024000}\n'
+            "    verified: false",
+        )
+        source = parse_sources(manifest)[0]
+
+        class FakeApi:
+            def model_info(self, repo):
+                return {"sha": "fixture-revision"}
+
+            def config(self, repo):
+                return json.loads((FIXTURES / "config.json").read_text(encoding="utf-8"))
+
+            def repo_tree(self, repo, revision):
+                return json.loads((FIXTURES / "tree.json").read_text(encoding="utf-8"))
+
+        model = build_model(source, FakeApi())
+
+        self.assertEqual(model["arch"]["layers"], 28)
+        self.assertEqual(model["arch"]["kv_heads"], 4)
+        self.assertEqual(model["arch"]["head_dim"], 160)
+        self.assertEqual(model["arch"]["context_max"], 1024000)
 
     def test_rejects_unquoted_hash_values_and_preserves_quoted_values(self):
         parse_sources(SOURCE_MANIFEST)

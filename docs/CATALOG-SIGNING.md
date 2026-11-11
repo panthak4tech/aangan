@@ -14,7 +14,28 @@ The backup key should be kept offline and used only if the primary is lost.
 
 ## Signing a catalog update
 
-After updating `catalog/models.v1.json`, run this from the repository root:
+Before signing a generated catalog, verify its architecture metadata against
+the GGUF headers:
+
+```powershell
+python tools/catalog/verify_catalog.py --limit 5
+python tools/catalog/verify_catalog.py
+```
+
+The verifier probes the first quant file for each model, compares its layer,
+KV-head, head-dimension, and context-length values with the catalog, and exits
+with an error if any mismatch is found. It waits at least one second between
+uncached requests and stores probe results under `tools/catalog/.cache/`;
+the cache is local and must not be committed. A mismatch report does not modify
+the catalog or the source list. Fix the source metadata, rebuild the catalog,
+and verify it again before signing. The catalog's `verified` field remains
+curated in `catalog/sources.yml`; it is not changed automatically by this tool.
+If a model's upstream config metadata differs from its GGUF header, a
+model-specific `arch_overrides` object in `catalog/sources.yml` can record the
+header-verified architecture values; run the verifier again after rebuilding.
+
+After verification and updating `catalog/models.v1.json`, run this from the
+repository root:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File tools/catalog/sign.ps1

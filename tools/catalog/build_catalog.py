@@ -36,6 +36,8 @@ SOURCE_FIELDS = {
     "verified",
     "added_at",
 }
+OPTIONAL_SOURCE_FIELDS = {"arch_overrides"}
+ARCH_FIELDS = {"layers", "kv_heads", "head_dim", "context_max"}
 FAMILY_SEARCH = {
     "qwen2.5": "Qwen",
     "llama3": "Llama",
@@ -107,11 +109,24 @@ def parse_sources(contents: str) -> list[dict[str, Any]]:
         raise CatalogBuildError("sources manifest must contain a non-empty models list")
     for index, model in enumerate(models, start=1):
         missing = SOURCE_FIELDS - model.keys()
-        extra = model.keys() - SOURCE_FIELDS
+        extra = model.keys() - SOURCE_FIELDS - OPTIONAL_SOURCE_FIELDS
         if missing or extra:
             raise CatalogBuildError(
                 f"source model {index} has missing fields {sorted(missing)} "
                 f"or unknown fields {sorted(extra)}"
+            )
+        arch_overrides = model.get("arch_overrides", {})
+        if not isinstance(arch_overrides, dict) or not arch_overrides:
+            if "arch_overrides" in model:
+                raise CatalogBuildError(
+                    f"source model {model['id']} arch_overrides must be a non-empty object"
+                )
+        elif set(arch_overrides) - ARCH_FIELDS or any(
+            not isinstance(value, int) or isinstance(value, bool) or value <= 0
+            for value in arch_overrides.values()
+        ):
+            raise CatalogBuildError(
+                f"source model {model['id']} has invalid arch_overrides"
             )
         if not isinstance(model["id"], str) or not re.fullmatch(
             r"[a-z0-9][a-z0-9._-]*", model["id"]
@@ -290,6 +305,7 @@ def build_model(source: dict[str, Any], api: HuggingFaceApi) -> dict[str, Any]:
     gguf_info = api.model_info(source["gguf_repo"])
     config = api.config(source["config_repo"])
     architecture = parse_config(config)
+    architecture.update(source.get("arch_overrides", {}))
     files = api.repo_tree(source["gguf_repo"], gguf_info["sha"])
     quants = select_quants(files, source["gguf_repo"], gguf_info["sha"])
     if not quants:

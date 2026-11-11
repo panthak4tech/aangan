@@ -192,6 +192,7 @@ models:
     license_url: "https://www.apache.org/licenses/LICENSE-2.0"
     gated: false
     tags: ["chat", "multilingual"]
+    arch_overrides: {"head_dim": 160, "context_max": 1024000}
     verified: false
     added_at: "2026-10-25"
   - id: "mistral-small-24b-instruct"
@@ -205,6 +206,7 @@ models:
     license_url: "https://www.apache.org/licenses/LICENSE-2.0"
     gated: false
     tags: ["chat", "large"]
+    arch_overrides: {"head_dim": 160}
     verified: false
     added_at: "2026-10-25"
   - id: "phi3.5-mini-instruct"
