@@ -30,6 +30,9 @@ the cache is local and must not be committed. A mismatch report does not modify
 the catalog or the source list. Fix the source metadata, rebuild the catalog,
 and verify it again before signing. The catalog's `verified` field remains
 curated in `catalog/sources.yml`; it is not changed automatically by this tool.
+If a model's upstream config metadata differs from its GGUF header, a
+model-specific `arch_overrides` object in `catalog/sources.yml` can record the
+header-verified architecture values; run the verifier again after rebuilding.
 
 After verification and updating `catalog/models.v1.json`, run this from the
 repository root:
