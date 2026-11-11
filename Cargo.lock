@@ -35,6 +35,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "aangan-net"
+version = "0.4.0"
+dependencies = [
+ "bytes",
+ "reqwest 0.12.28",
+ "serde",
+ "tokio",
+ "tokio-util",
+ "url",
+]
+
+[[package]]
 name = "aangan-types"
 version = "0.4.0"
 dependencies = [
@@ -4471,7 +4483,9 @@ dependencies = [
  "bytes",
  "libc",
  "mio",
+ "parking_lot",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",
@@ -4507,6 +4521,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "libc",
  "pin-project-lite",
  "tokio",
