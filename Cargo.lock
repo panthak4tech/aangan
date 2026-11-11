@@ -18,11 +18,11 @@ dependencies = [
 name = "aangan-desktop"
 version = "0.4.0"
 dependencies = [
+ "aangan-net",
  "aangan-types",
  "fitcalc",
  "hwprobe",
  "minisign-verify",
- "reqwest 0.12.28",
  "serde",
  "serde_json",
  "tauri",
@@ -31,6 +31,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tempfile",
  "tokio",
+ "url",
  "wiremock",
 ]
 

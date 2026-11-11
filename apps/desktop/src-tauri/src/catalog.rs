@@ -1,10 +1,11 @@
+use aangan_net::{NetError, NetGate, Purpose};
 use fitcalc::{License, ModelSpec};
-use reqwest::Url;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::Arc;
 use std::{fs, io::Write};
+use url::Url;
 
 pub mod signature;
 use signature::{CATALOG_PUBLIC_KEYS, SignatureError, verify_catalog};
@@ -74,6 +75,8 @@ struct CatalogQuant {
 struct AppSettings {
     #[serde(default)]
     refresh_catalog_always_allowed: bool,
+    #[serde(default)]
+    offline_mode: bool,
     #[serde(default)]
     subscribed_families: Option<Vec<String>>,
 }
@@ -566,6 +569,16 @@ pub fn set_refresh_consent(data_dir: &Path, always_allowed: bool) -> Result<(), 
     save_settings(data_dir, &settings)
 }
 
+pub fn offline_mode(data_dir: &Path) -> Result<bool, String> {
+    Ok(load_settings(data_dir)?.offline_mode)
+}
+
+pub fn set_offline_mode(data_dir: &Path, offline_mode: bool) -> Result<(), String> {
+    let mut settings = load_settings(data_dir)?;
+    settings.offline_mode = offline_mode;
+    save_settings(data_dir, &settings)
+}
+
 pub fn reset_catalog(data_dir: &Path, bundled_json: &str) -> Result<CatalogInfo, String> {
     match fs::remove_file(cache_path(data_dir)) {
         Ok(()) => {}
@@ -595,15 +608,18 @@ pub fn ensure_refresh_consent(always_allowed: bool, consent_once: bool) -> Resul
 }
 
 pub async fn refresh_catalog(
+    gate: &Arc<NetGate>,
     data_dir: &Path,
     bundled_json: &str,
     consent_once: bool,
 ) -> Result<RefreshResult, String> {
+    if gate.is_offline() {
+        return Err(NetError::Offline.to_string());
+    }
     let settings = load_settings(data_dir)?;
     ensure_refresh_consent(settings.refresh_catalog_always_allowed, consent_once)?;
-    let client = catalog_client()?;
     refresh_catalog_with(
-        &client,
+        gate,
         CATALOG_URL,
         data_dir,
         bundled_json,
@@ -612,17 +628,8 @@ pub async fn refresh_catalog(
     .await
 }
 
-fn catalog_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .redirect(reqwest::redirect::Policy::none())
-        .user_agent(concat!("Aangan/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|error| format!("could not configure catalog request: {error}"))
-}
-
 pub async fn refresh_catalog_with(
-    client: &reqwest::Client,
+    gate: &Arc<NetGate>,
     url: &str,
     data_dir: &Path,
     bundled_json: &str,
@@ -632,7 +639,7 @@ pub async fn refresh_catalog_with(
     if !is_allowed_catalog_url(&parsed_url) && !is_local_test_catalog_url(&parsed_url) {
         return Err("catalog refresh URL is not allow-listed".to_string());
     }
-    refresh_from_url(client, parsed_url, data_dir, bundled_json, keys).await
+    refresh_from_url(gate, parsed_url, data_dir, bundled_json, keys).await
 }
 
 fn is_allowed_catalog_url(url: &Url) -> bool {
@@ -663,7 +670,7 @@ fn is_local_test_catalog_url(_url: &Url) -> bool {
 }
 
 async fn refresh_from_url(
-    client: &reqwest::Client,
+    gate: &Arc<NetGate>,
     url: Url,
     data_dir: &Path,
     bundled_json: &str,
@@ -675,9 +682,9 @@ async fn refresh_from_url(
     let signature_url = Url::parse(signature_url.as_str())
         .map_err(|error| format!("catalog signature URL is invalid: {error}"))?;
 
-    let bytes = fetch_limited(client, &url, MAX_CATALOG_BYTES, "catalog").await?;
+    let bytes = fetch_limited(gate, &url, MAX_CATALOG_BYTES, "catalog").await?;
     let signature_bytes = fetch_limited(
-        client,
+        gate,
         &signature_url,
         MAX_SIGNATURE_BYTES,
         "catalog signature",
@@ -727,39 +734,57 @@ fn signature_error_message(error: SignatureError) -> String {
 }
 
 async fn fetch_limited(
-    client: &reqwest::Client,
+    gate: &Arc<NetGate>,
     url: &Url,
     max_bytes: usize,
     label: &str,
 ) -> Result<Vec<u8>, String> {
-    let mut response = client
-        .get(url.clone())
-        .send()
+    let mut response = gate
+        .get(Purpose::Catalog, url.as_str(), None)
         .await
         .map_err(|error| format!("could not download {label}: {error}"))?;
     if !response.status().is_success() {
+        let status = response.status();
+        response
+            .finish(false, &format!("HTTP {status}"))
+            .map_err(|error| error.to_string())?;
         return Err(format!(
-            "{label} server returned an unexpected status: {}",
-            response.status()
+            "{label} server returned an unexpected status: {status}"
         ));
     }
     if response
         .content_length()
         .is_some_and(|length| length > max_bytes as u64)
     {
+        response
+            .finish(false, "exceeds the size limit")
+            .map_err(|error| error.to_string())?;
         return Err(format!("{label} exceeds the size limit"));
     }
     let mut bytes = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|error| format!("could not read {label} response: {error}"))?
-    {
+    loop {
+        let chunk = match response.chunk().await {
+            Ok(Some(chunk)) => chunk,
+            Ok(None) => break,
+            Err(error) => {
+                let message = format!("could not read {label} response: {error}");
+                response
+                    .finish(false, &message)
+                    .map_err(|finish_error| finish_error.to_string())?;
+                return Err(message);
+            }
+        };
         if bytes.len().saturating_add(chunk.len()) > max_bytes {
+            response
+                .finish(false, "exceeds the size limit")
+                .map_err(|error| error.to_string())?;
             return Err(format!("{label} exceeds the size limit"));
         }
         bytes.extend_from_slice(&chunk);
     }
+    response
+        .finish(true, "ok")
+        .map_err(|error| error.to_string())?;
     Ok(bytes)
 }
 
@@ -852,6 +877,10 @@ mod tests {
             .expect("test public key file has a key line")
             .trim()
             .to_string()
+    }
+
+    fn test_gate() -> Arc<NetGate> {
+        NetGate::new_insecure_for_tests().expect("test network gate")
     }
 
     fn catalog_json() -> Value {
@@ -1022,6 +1051,25 @@ mod tests {
     }
 
     #[test]
+    fn offline_mode_defaults_off_for_existing_settings_and_round_trips() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        fs::write(
+            settings_path(directory.path()),
+            r#"{"refresh_catalog_always_allowed":true}"#,
+        )
+        .expect("write previous settings format");
+
+        assert!(!offline_mode(directory.path()).expect("existing settings default online"));
+        set_offline_mode(directory.path(), true).expect("save offline mode");
+        assert!(offline_mode(directory.path()).expect("read offline mode"));
+        assert!(
+            load_settings(directory.path())
+                .expect("load settings")
+                .refresh_catalog_always_allowed
+        );
+    }
+
+    #[test]
     fn unknown_parameter_counts_are_skipped_with_a_visible_warning() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let mut value = catalog_json();
@@ -1089,8 +1137,9 @@ mod tests {
     #[tokio::test]
     async fn refresh_rejects_unallowlisted_url_before_requesting() {
         let directory = tempfile::tempdir().expect("temporary directory");
+        let gate = test_gate();
         let error = refresh_catalog_with(
-            &reqwest::Client::new(),
+            &gate,
             "https://example.com/catalog.json",
             directory.path(),
             BUNDLED,
@@ -1103,7 +1152,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn refresh_does_not_follow_redirects() {
+    async fn offline_mode_overrides_both_catalog_consent_paths() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        set_refresh_consent(directory.path(), true).expect("save persistent consent");
+        let gate = test_gate();
+        gate.set_offline(true).expect("enable offline mode");
+
+        let error = refresh_catalog(&gate, directory.path(), BUNDLED, true)
+            .await
+            .expect_err("offline mode must override all consent");
+
+        assert!(error.contains("Offline mode is on"));
+        assert!(!cache_path(directory.path()).exists());
+    }
+
+    #[tokio::test]
+    async fn refresh_follows_same_host_redirects() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -1111,17 +1175,18 @@ mod tests {
             .respond_with(ResponseTemplate::new(302).insert_header("location", "/elsewhere.json"))
             .mount(&server)
             .await;
+        Mock::given(method("GET"))
+            .and(path("/elsewhere.json"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        let gate = test_gate();
         let url = Url::parse(&format!("{}/catalog.json", server.uri())).expect("mock URL");
-        let error = refresh_from_url(
-            &catalog_client().expect("catalog client"),
-            url,
-            directory.path(),
-            BUNDLED,
-            CATALOG_PUBLIC_KEYS,
-        )
-        .await
-        .expect_err("redirect response should not be followed");
+        let error = refresh_from_url(&gate, url, directory.path(), BUNDLED, CATALOG_PUBLIC_KEYS)
+            .await
+            .expect_err("missing redirected response should fail");
         assert!(error.contains("unexpected status"));
+        assert_eq!(server.received_requests().await.expect("requests").len(), 2);
         assert!(!cache_path(directory.path()).exists());
     }
 
@@ -1140,12 +1205,12 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = catalog_client().expect("catalog client");
+        let gate = test_gate();
         let local_url =
             Url::parse(&format!("{}/catalog.json", server.uri())).expect("local mock server URL");
         let test_key = test_public_key();
         let result = refresh_catalog_with(
-            &client,
+            &gate,
             local_url.as_str(),
             directory.path(),
             BUNDLED,
@@ -1180,16 +1245,11 @@ mod tests {
             .await;
         let test_key = test_public_key();
         let url = format!("{}/catalog.json", server.uri());
+        let gate = test_gate();
 
-        let error = refresh_catalog_with(
-            &catalog_client().expect("catalog client"),
-            &url,
-            directory.path(),
-            BUNDLED,
-            &[&test_key],
-        )
-        .await
-        .expect_err("tampered JSON must fail signature verification");
+        let error = refresh_catalog_with(&gate, &url, directory.path(), BUNDLED, &[&test_key])
+            .await
+            .expect_err("tampered JSON must fail signature verification");
 
         assert_eq!(error, "catalog_signature:untrusted");
         assert!(!cache_path(directory.path()).exists());
@@ -1206,16 +1266,11 @@ mod tests {
             .await;
         let test_key = test_public_key();
         let url = format!("{}/catalog.json", server.uri());
+        let gate = test_gate();
 
-        let error = refresh_catalog_with(
-            &catalog_client().expect("catalog client"),
-            &url,
-            directory.path(),
-            BUNDLED,
-            &[&test_key],
-        )
-        .await
-        .expect_err("missing signature must fail");
+        let error = refresh_catalog_with(&gate, &url, directory.path(), BUNDLED, &[&test_key])
+            .await
+            .expect_err("missing signature must fail");
 
         assert_eq!(error, "catalog_signature:malformed");
         assert!(!cache_path(directory.path()).exists());
@@ -1237,16 +1292,11 @@ mod tests {
             .await;
         let test_key = test_public_key();
         let url = format!("{}/catalog.json", server.uri());
+        let gate = test_gate();
 
-        let error = refresh_catalog_with(
-            &catalog_client().expect("catalog client"),
-            &url,
-            directory.path(),
-            BUNDLED,
-            &[&test_key],
-        )
-        .await
-        .expect_err("untrusted key signature must fail");
+        let error = refresh_catalog_with(&gate, &url, directory.path(), BUNDLED, &[&test_key])
+            .await
+            .expect_err("untrusted key signature must fail");
 
         assert_eq!(error, "catalog_signature:untrusted");
         assert!(!cache_path(directory.path()).exists());
@@ -1268,16 +1318,11 @@ mod tests {
             .await;
         let test_key = test_public_key();
         let url = format!("{}/catalog.json", server.uri());
+        let gate = test_gate();
 
-        let result = refresh_catalog_with(
-            &catalog_client().expect("catalog client"),
-            &url,
-            directory.path(),
-            BUNDLED,
-            &[&test_key],
-        )
-        .await
-        .expect("older signed catalog is valid but stale");
+        let result = refresh_catalog_with(&gate, &url, directory.path(), BUNDLED, &[&test_key])
+            .await
+            .expect("older signed catalog is valid but stale");
 
         assert_eq!(result.generated_at, "2026-10-21T13:30:00Z");
         assert_eq!(result.added, 0);
@@ -1302,15 +1347,10 @@ mod tests {
             .mount(&server)
             .await;
         let url = Url::parse(&format!("{}/catalog.json", server.uri())).expect("mock URL");
-        let error = refresh_from_url(
-            &reqwest::Client::new(),
-            url,
-            directory.path(),
-            BUNDLED,
-            &[&test_public_key()],
-        )
-        .await
-        .expect_err("oversize response should be rejected");
+        let gate = test_gate();
+        let error = refresh_from_url(&gate, url, directory.path(), BUNDLED, &[&test_public_key()])
+            .await
+            .expect_err("oversize response should be rejected");
         assert!(error.contains("size limit"));
         assert_eq!(
             fs::read(cache_path(directory.path())).expect("cache remains"),

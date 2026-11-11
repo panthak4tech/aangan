@@ -21,6 +21,31 @@ export interface CatalogRefreshResult {
   updated: number;
 }
 
+export type NetworkPurpose =
+  | "catalog"
+  | "runtime_manifest"
+  | "model_download"
+  | "runtime_download";
+
+export interface NetworkState {
+  offlineMode: boolean;
+  active: number;
+  hosts: string[];
+  purposes: NetworkPurpose[];
+  bytesDown: number;
+}
+
+export interface NetworkActivity {
+  id: number;
+  startedMs: number;
+  purpose: NetworkPurpose;
+  host: string;
+  via: string | null;
+  bytesDown: number;
+  ok: boolean | null;
+  note: string;
+}
+
 export interface GpuInfo {
   name: string;
   vendor: GpuVendor;

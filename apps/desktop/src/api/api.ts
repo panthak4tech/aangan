@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
 import { getDevPreset, getFailScans } from "./devPreset";
 import { rankModels } from "./estimate";
@@ -8,6 +9,8 @@ import type {
   CatalogInfo,
   CatalogRefreshResult,
   HardwareProfile,
+  NetworkActivity,
+  NetworkState,
   Recommendation,
 } from "./types";
 
@@ -17,6 +20,7 @@ const inTauri =
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const DELAY_MS = 1500;
 const BANDWIDTH_EXTRA_MS = 2000;
+const OFFLINE_MODE_KEY = "aangan.network.offlineMode";
 const wait = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -108,6 +112,44 @@ export async function refreshCatalog(consentOnce: boolean): Promise<CatalogRefre
     throw new Error("Catalog refresh is available only in the desktop app.");
   }
   return invoke<CatalogRefreshResult>("refresh_catalog", { consentOnce });
+}
+
+export async function getNetworkState(): Promise<NetworkState> {
+  if (!inTauri) {
+    return {
+      offlineMode: window.localStorage.getItem(OFFLINE_MODE_KEY) === "true",
+      active: 0,
+      hosts: [],
+      purposes: [],
+      bytesDown: 0,
+    };
+  }
+  return invoke<NetworkState>("get_network_state");
+}
+
+export async function getNetworkActivity(): Promise<NetworkActivity[]> {
+  if (!inTauri) return [];
+  return invoke<NetworkActivity[]>("get_network_activity");
+}
+
+export async function clearNetworkActivity(): Promise<void> {
+  if (!inTauri) return;
+  return invoke<void>("clear_network_activity");
+}
+
+export async function setOfflineMode(offlineMode: boolean): Promise<NetworkState> {
+  if (!inTauri) {
+    window.localStorage.setItem(OFFLINE_MODE_KEY, String(offlineMode));
+    return getNetworkState();
+  }
+  return invoke<NetworkState>("set_offline_mode", { offlineMode });
+}
+
+export async function listenNetworkState(
+  onState: (state: NetworkState) => void,
+): Promise<UnlistenFn> {
+  if (!inTauri) return () => {};
+  return listen<NetworkState>("network://state", (event) => onState(event.payload));
 }
 
 export async function saveHardwareReport(

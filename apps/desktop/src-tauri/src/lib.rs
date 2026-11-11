@@ -1,10 +1,12 @@
+use aangan_net::{NetGate, NetRecord, NetState};
 use aangan_types::HardwareProfile;
 use fitcalc::{Recommendation, Tunables, recommend};
 use hwprobe::{ProbeOptions, probe};
 use serde::Serialize;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use tauri::{Manager, path::BaseDirectory};
+use std::sync::Arc;
+use tauri::{Emitter, Manager, State, path::BaseDirectory};
 use tauri_plugin_opener::OpenerExt;
 
 mod catalog;
@@ -136,9 +138,44 @@ fn reset_catalog(app: tauri::AppHandle) -> Result<catalog::CatalogInfo, String> 
 #[tauri::command]
 async fn refresh_catalog(
     app: tauri::AppHandle,
+    gate: State<'_, Arc<NetGate>>,
     consent_once: bool,
 ) -> Result<catalog::RefreshResult, String> {
-    catalog::refresh_catalog(&app_data_dir(&app)?, BUNDLED_CATALOG, consent_once).await
+    catalog::refresh_catalog(&gate, &app_data_dir(&app)?, BUNDLED_CATALOG, consent_once).await
+}
+
+#[tauri::command]
+fn get_network_state(gate: State<'_, Arc<NetGate>>) -> Result<NetState, String> {
+    gate.state().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn get_network_activity(gate: State<'_, Arc<NetGate>>) -> Result<Vec<NetRecord>, String> {
+    gate.log().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn clear_network_activity(gate: State<'_, Arc<NetGate>>) -> Result<(), String> {
+    gate.clear_log().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn set_offline_mode(
+    app: tauri::AppHandle,
+    gate: State<'_, Arc<NetGate>>,
+    offline_mode: bool,
+) -> Result<NetState, String> {
+    let data_dir = app_data_dir(&app)?;
+    let previous = gate.is_offline();
+    gate.set_offline(offline_mode)
+        .map_err(|error| error.to_string())?;
+    if let Err(error) = catalog::set_offline_mode(&data_dir, offline_mode) {
+        gate.set_offline(previous).map_err(|rollback_error| {
+            format!("{error}; additionally could not restore network state: {rollback_error}")
+        })?;
+        return Err(error);
+    }
+    gate.state().map_err(|error| error.to_string())
 }
 
 fn validate_save_request(
@@ -211,13 +248,46 @@ pub fn run() -> Result<(), tauri::Error> {
             set_catalog_refresh_consent,
             reset_catalog,
             refresh_catalog,
+            get_network_state,
+            get_network_activity,
+            clear_network_activity,
+            set_offline_mode,
             open_aangan_repository,
             open_third_party_notices,
             save_text_file,
             get_app_paths
         ])
         .setup(|app| {
-            app_data_dir(app.handle()).map_err(std::io::Error::other)?;
+            let data_dir = app_data_dir(app.handle()).map_err(std::io::Error::other)?;
+            let gate = NetGate::new().map_err(std::io::Error::other)?;
+            gate.set_offline(catalog::offline_mode(&data_dir).map_err(std::io::Error::other)?)
+                .map_err(std::io::Error::other)?;
+            let mut network_events = gate.subscribe();
+            let event_app = app.handle().clone();
+            let event_gate = Arc::clone(&gate);
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    let state = match network_events.recv().await {
+                        Ok(state) => state,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                            match event_gate.state() {
+                                Ok(state) => state,
+                                Err(error) => {
+                                    eprintln!(
+                                        "could not read network state after event lag: {error}"
+                                    );
+                                    continue;
+                                }
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    };
+                    if let Err(error) = event_app.emit("network://state", state) {
+                        eprintln!("could not emit network state event: {error}");
+                    }
+                }
+            });
+            app.manage(gate);
             #[cfg(windows)]
             {
                 let icon = tauri::image::Image::from_app_icon_resource(128)?;
