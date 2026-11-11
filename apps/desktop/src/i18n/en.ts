@@ -134,7 +134,37 @@ export const en = {
       subtitle: "A few preferences, nothing more.",
       privacy: {
         title: "Privacy",
-        body: "Aangan works offline by default and collects no data. If you choose to refresh the catalog, it contacts raw.githubusercontent.com to download public model metadata; no information about this PC is sent.",
+        body: "Aangan works offline by default and collects no data. If you choose to refresh the catalog, it contacts raw.githubusercontent.com to download public model metadata; no information about this PC is sent. Offline mode blocks and cancels network requests, regardless of saved catalog consent.",
+      },
+      network: {
+        title: "Network",
+        body: "Network activity is stored only in memory on this PC and is cleared when Aangan closes.",
+        loading: "Loading network settings",
+        loadFailed: (reason: string) => `Couldn't read network settings: ${reason}`,
+        offlineMode: "Offline mode",
+        offlineDescription:
+          "Blocks new requests and cancels in-progress ones, even if catalog refresh consent is saved.",
+        offlineOn: "Offline mode is on.",
+        offlineOff:
+          "Offline mode is off. Network requests still need a user-initiated action and, for catalog refreshes, your consent.",
+        offlineSaveFailed: (reason: string) => `Couldn't change Offline mode: ${reason}`,
+        activeRequests: (count: number) =>
+          count === 1 ? "1 request in progress" : `${count} requests in progress`,
+        activeHosts: (hosts: string) => `Active hosts: ${hosts}`,
+        activeDownload: (bytes: string) => `Downloaded so far: ${bytes}`,
+        activity: "Recent activity",
+        emptyActivity: "No network activity yet.",
+        clearActivity: "Clear activity",
+        clearFailed: (reason: string) => `Couldn't clear network activity: ${reason}`,
+        inProgress: "In progress",
+        succeeded: "Completed",
+        failed: "Failed or canceled",
+        purposeLabels: {
+          catalog: "Model catalog",
+          runtime_manifest: "Runtime list",
+          model_download: "Model download",
+          runtime_download: "Runtime download",
+        },
       },
       catalog: {
         title: "Model catalog",
