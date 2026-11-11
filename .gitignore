@@ -11,3 +11,4 @@ apps/desktop/src-tauri/binaries/
 __pycache__/
 *.pyc
 .venv*/
+tools/catalog/.cache/
