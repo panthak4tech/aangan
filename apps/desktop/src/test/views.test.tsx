@@ -4,14 +4,19 @@ import packageMetadata from "../../package.json";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   copyHardwareReport,
+  clearNetworkActivity,
   getAppPaths,
   getCatalogInfo,
+  getNetworkActivity,
+  getNetworkState,
+  listenNetworkState,
   recommendModels,
   refreshCatalog,
   resetCatalog,
   saveHardwareReport,
   scanHardware,
   setCatalogRefreshConsent,
+  setOfflineMode,
   setSubscribedFamilies,
 } from "@/api/api";
 import type { HardwareProfile } from "@/api/types";
@@ -35,14 +40,19 @@ vi.mock("@/api/api", async () => {
   const { default: metadata } = await import("../../package.json");
   return {
     copyHardwareReport: vi.fn(),
+    clearNetworkActivity: vi.fn(),
     getAppPaths: vi.fn(),
     getCatalogInfo: vi.fn(),
+    getNetworkActivity: vi.fn(),
+    getNetworkState: vi.fn(),
+    listenNetworkState: vi.fn(),
     recommendModels: vi.fn(),
     refreshCatalog: vi.fn(),
     resetCatalog: vi.fn(),
     saveHardwareReport: vi.fn(),
     scanHardware: vi.fn(),
     setCatalogRefreshConsent: vi.fn(),
+    setOfflineMode: vi.fn(),
     setSubscribedFamilies: vi.fn(),
     APP_INFO: {
       version: metadata.version,
@@ -67,6 +77,21 @@ beforeEach(() => {
     signature_verified: false,
   };
   vi.mocked(getCatalogInfo).mockResolvedValue(catalogInfo);
+  const networkState = {
+    offlineMode: false,
+    active: 0,
+    hosts: [],
+    purposes: [],
+    bytesDown: 0,
+  };
+  vi.mocked(getNetworkState).mockResolvedValue(networkState);
+  vi.mocked(getNetworkActivity).mockResolvedValue([]);
+  vi.mocked(listenNetworkState).mockResolvedValue(vi.fn());
+  vi.mocked(clearNetworkActivity).mockResolvedValue();
+  vi.mocked(setOfflineMode).mockImplementation(async (offlineMode) => ({
+    ...networkState,
+    offlineMode,
+  }));
   vi.mocked(setSubscribedFamilies).mockImplementation(async (families) => ({
     ...catalogInfo,
     subscribed_families: families,
@@ -468,6 +493,58 @@ describe("SettingsView and FirstRunWizard", () => {
 
     expect(
       await screen.findByText(/Catalog generated .*Signature: verified/),
+    ).toBeInTheDocument();
+  });
+
+  it("shows network activity and saves the Offline mode preference", async () => {
+    const activity = {
+      id: 1,
+      startedMs: Date.parse("2026-10-22T13:30:00Z"),
+      purpose: "catalog" as const,
+      host: "raw.githubusercontent.com",
+      via: null,
+      bytesDown: 128,
+      ok: true,
+      note: "ok",
+    };
+    vi.mocked(getNetworkActivity).mockResolvedValue([activity]);
+    vi.mocked(setOfflineMode).mockResolvedValue({
+      offlineMode: true,
+      active: 0,
+      hosts: [],
+      purposes: [],
+      bytesDown: 0,
+    });
+    render(<ToastProvider><SettingsView /></ToastProvider>);
+
+    expect(await screen.findByText("raw.githubusercontent.com")).toBeInTheDocument();
+    const offlineCheckbox = screen.getByRole("checkbox", { name: /Offline mode/ });
+    expect(offlineCheckbox).not.toBeChecked();
+    fireEvent.click(offlineCheckbox);
+    await waitFor(() => expect(setOfflineMode).toHaveBeenCalledWith(true));
+    await waitFor(() => expect(offlineCheckbox).toBeChecked());
+
+    fireEvent.click(screen.getByRole("button", { name: en.views.settings.network.clearActivity }));
+    await waitFor(() => expect(clearNetworkActivity).toHaveBeenCalledOnce());
+  });
+
+  it("updates active network status from gate events", async () => {
+    const activeState = {
+      offlineMode: false,
+      active: 1,
+      hosts: ["raw.githubusercontent.com"],
+      purposes: ["catalog" as const],
+      bytesDown: 64,
+    };
+    vi.mocked(listenNetworkState).mockImplementation(async (onState) => {
+      onState(activeState);
+      return () => undefined;
+    });
+    render(<ToastProvider><SettingsView /></ToastProvider>);
+
+    expect(await screen.findByText(en.views.settings.network.activeRequests(1))).toBeInTheDocument();
+    expect(
+      screen.getByText(en.views.settings.network.activeHosts("raw.githubusercontent.com")),
     ).toBeInTheDocument();
   });
 

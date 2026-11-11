@@ -1,17 +1,31 @@
-import { Database, FolderOpen, Info, Languages, Monitor, ShieldCheck } from "lucide-react";
+import {
+  Database,
+  FolderOpen,
+  Globe,
+  Info,
+  Languages,
+  Monitor,
+  ShieldCheck,
+  Trash2,
+} from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { AboutDialog } from "@/app/notices/NoticesDialog";
 import {
   APP_INFO,
+  clearNetworkActivity,
   getAppPaths,
   getCatalogInfo,
+  getNetworkActivity,
+  getNetworkState,
+  listenNetworkState,
   resetCatalog,
   setCatalogRefreshConsent,
+  setOfflineMode,
   setSubscribedFamilies,
 } from "@/api/api";
-import type { AppPaths, CatalogInfo } from "@/api/types";
+import type { AppPaths, CatalogInfo, NetworkActivity, NetworkState } from "@/api/types";
 import { SpecRow } from "@/components/aangan/SystemSpecCard";
 import { Badge } from "@/components/primitives/badge";
 import { Button } from "@/components/primitives/button";
@@ -61,6 +75,12 @@ export function SettingsView() {
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [catalogSaving, setCatalogSaving] = useState(false);
   const [catalogResetting, setCatalogResetting] = useState(false);
+  const [networkState, setNetworkState] = useState<NetworkState | null>(null);
+  const [networkActivity, setNetworkActivity] = useState<NetworkActivity[]>([]);
+  const [networkLoading, setNetworkLoading] = useState(true);
+  const [networkError, setNetworkError] = useState<string | null>(null);
+  const [networkSaving, setNetworkSaving] = useState(false);
+  const [networkClearing, setNetworkClearing] = useState(false);
   const toast = useToast();
 
   useEffect(() => {
@@ -87,10 +107,84 @@ export function SettingsView() {
         if (mounted) setCatalogLoading(false);
       });
 
+    let latestEventState: NetworkState | null = null;
+    let lastActiveCount: number | undefined;
+    let unlisten: (() => void) | undefined;
+    void listenNetworkState((state) => {
+      if (!mounted) return;
+      latestEventState = state;
+      setNetworkError(null);
+      setNetworkState(state);
+      if (state.active !== lastActiveCount) {
+        lastActiveCount = state.active;
+        void getNetworkActivity()
+          .then((activity) => {
+            if (mounted) setNetworkActivity(activity);
+          })
+          .catch((error: unknown) => {
+            if (mounted) setNetworkError(errorMessage(error));
+          });
+      }
+    })
+      .then((stopListening) => {
+        if (mounted) unlisten = stopListening;
+        else stopListening();
+      })
+      .catch((error: unknown) => {
+        if (mounted) setNetworkError(errorMessage(error));
+      });
+
+    void getNetworkState()
+      .then((state) => {
+        if (!mounted) return;
+        if (!latestEventState) {
+          setNetworkState(state);
+          lastActiveCount = state.active;
+        }
+      })
+      .catch((error: unknown) => {
+        if (mounted) setNetworkError(errorMessage(error));
+      })
+      .finally(() => {
+        if (mounted) setNetworkLoading(false);
+      });
+
+    void getNetworkActivity()
+      .then((activity) => {
+        if (mounted && !latestEventState) setNetworkActivity(activity);
+      })
+      .catch((error: unknown) => {
+        if (mounted) setNetworkError(errorMessage(error));
+      });
+
     return () => {
       mounted = false;
+      unlisten?.();
     };
   }, []);
+
+  const updateOfflineMode = async (offlineMode: boolean) => {
+    setNetworkSaving(true);
+    try {
+      setNetworkState(await setOfflineMode(offlineMode));
+    } catch (error) {
+      toast(t.network.offlineSaveFailed(errorMessage(error)), { variant: "destructive" });
+    } finally {
+      setNetworkSaving(false);
+    }
+  };
+
+  const clearActivity = async () => {
+    setNetworkClearing(true);
+    try {
+      await clearNetworkActivity();
+      setNetworkActivity(await getNetworkActivity());
+    } catch (error) {
+      toast(t.network.clearFailed(errorMessage(error)), { variant: "destructive" });
+    } finally {
+      setNetworkClearing(false);
+    }
+  };
 
   const updateFamilies = async (family: string, subscribed: boolean) => {
     if (!catalogInfo) return;
@@ -163,6 +257,91 @@ export function SettingsView() {
 
       <SettingsSection icon={ShieldCheck} title={t.privacy.title}>
         <p className="text-sm text-muted-foreground">{t.privacy.body}</p>
+      </SettingsSection>
+
+      <SettingsSection icon={Globe} title={t.network.title}>
+        <p className="text-sm text-muted-foreground">{t.network.body}</p>
+        {networkError && (
+          <p role="alert" className="text-sm text-destructive">
+            {t.network.loadFailed(networkError)}
+          </p>
+        )}
+        {networkLoading ? (
+          <Skeleton role="status" aria-label={t.network.loading} className="h-8 w-full" />
+        ) : networkState ? (
+          <>
+            <label className="flex items-start gap-2 text-sm text-foreground">
+              <Checkbox
+                checked={networkState.offlineMode}
+                disabled={networkSaving}
+                onCheckedChange={(checked) => void updateOfflineMode(checked === true)}
+              />
+              <span>
+                <span className="block font-medium">{t.network.offlineMode}</span>
+                <span className="block text-muted-foreground">
+                  {t.network.offlineDescription}
+                </span>
+              </span>
+            </label>
+            <div className="flex flex-col gap-1 text-sm text-muted-foreground" aria-live="polite">
+              <p>{networkState.offlineMode ? t.network.offlineOn : t.network.offlineOff}</p>
+              <p>{t.network.activeRequests(networkState.active)}</p>
+              {networkState.hosts.length > 0 && (
+                <p>{t.network.activeHosts(networkState.hosts.join(", "))}</p>
+              )}
+              {networkState.active > 0 && (
+                <p>{t.network.activeDownload(formatBytes(networkState.bytesDown))}</p>
+              )}
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-sm font-medium text-foreground">{t.network.activity}</h3>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void clearActivity()}
+                disabled={networkClearing}
+              >
+                <Trash2 />
+                {t.network.clearActivity}
+              </Button>
+            </div>
+            {networkActivity.length === 0 ? (
+              <p className="text-sm text-muted-foreground">{t.network.emptyActivity}</p>
+            ) : (
+              <ol className="flex flex-col gap-2">
+                {networkActivity.slice(0, 10).map((record) => (
+                  <li key={record.id} className="flex flex-col gap-1 rounded-lg bg-muted px-3 py-2">
+                    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-sm">
+                      <span className="font-medium text-foreground">
+                        {t.network.purposeLabels[record.purpose]}
+                      </span>
+                      <span className="text-muted-foreground">
+                        {record.ok === null
+                          ? t.network.inProgress
+                          : record.ok
+                            ? t.network.succeeded
+                            : t.network.failed}
+                      </span>
+                    </div>
+                    <span className="break-all text-xs text-muted-foreground">
+                      {record.host}
+                      {record.via && ` → ${record.via}`}
+                    </span>
+                    <div className="flex flex-wrap justify-between gap-x-3 text-xs text-muted-foreground">
+                      <time dateTime={new Date(record.startedMs).toISOString()}>
+                        {formatActivityTime(record.startedMs)}
+                      </time>
+                      <span>{formatBytes(record.bytesDown)}</span>
+                    </div>
+                    {record.note && record.note !== "ok" && (
+                      <p className="break-words text-xs text-muted-foreground">{record.note}</p>
+                    )}
+                  </li>
+                ))}
+              </ol>
+            )}
+          </>
+        ) : null}
       </SettingsSection>
 
       <SettingsSection icon={FolderOpen} title={t.data.title}>
@@ -301,4 +480,21 @@ function errorMessage(error: unknown): string {
 
 function formatCatalogDate(value: string): string {
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(value));
+}
+
+function formatActivityTime(value: number): string {
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "short", timeStyle: "short" })
+    .format(new Date(value));
+}
+
+function formatBytes(value: number): string {
+  if (value < 1024) return `${value} B`;
+  const units = ["KiB", "MiB", "GiB", "TiB"];
+  let amount = value;
+  let unitIndex = -1;
+  do {
+    amount /= 1024;
+    unitIndex += 1;
+  } while (amount >= 1024 && unitIndex < units.length - 1);
+  return `${amount.toFixed(amount < 10 ? 1 : 0)} ${units[unitIndex]}`;
 }

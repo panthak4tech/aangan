@@ -9,3 +9,7 @@ signature locally before using the catalog. No information about the PC is sent.
 
 The bundled catalog remains available offline. See
 [Catalog signing](./CATALOG-SIGNING.md) for the signing and key-storage process.
+
+Offline mode in Settings blocks new network requests and cancels in-progress
+requests, even when catalog refresh consent has been saved. Recent network
+activity is kept in memory on the PC only and is cleared when Aangan closes.

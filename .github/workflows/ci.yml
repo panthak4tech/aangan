@@ -44,12 +44,13 @@ jobs:
         with:
           tool: cargo-llvm-cov
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --exclude "$DESKTOP_CRATE" --all-targets --locked -- -D warnings
+      - run: cargo clippy --workspace --exclude "$DESKTOP_CRATE" --all-targets --locked --features aangan-net/test-util -- -D warnings
       - name: Doc tests
         run: cargo test --workspace --exclude "$DESKTOP_CRATE" --doc --locked
       - name: Unit tests + coverage (workspace floor)
         run: >
           cargo llvm-cov --workspace --exclude "$DESKTOP_CRATE" --locked
+          --features aangan-net/test-util
           --lcov --output-path lcov.info
           --ignore-filename-regex "$COV_IGNORE"
           --fail-under-lines "$RUST_MIN_LINES"

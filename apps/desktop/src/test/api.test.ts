@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import packageMetadata from "../../package.json";
 import { APP_INFO, MODELS, PRESETS } from "@/api/presets";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn() }));
 
 import { save } from "@tauri-apps/plugin-dialog";
@@ -12,6 +14,7 @@ beforeEach(() => {
   Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
   window.localStorage.removeItem("aangan.catalog.subscribedFamilies");
   window.localStorage.removeItem("aangan.catalog.refreshAlwaysAllowed");
+  window.localStorage.removeItem("aangan.network.offlineMode");
   vi.resetModules();
 });
 
@@ -161,6 +164,28 @@ describe("browser API wrappers", () => {
 
     await expect(getCatalogInfo()).rejects.toThrow();
   });
+
+  it("persists offline mode in browser mocks without network activity", async () => {
+    const {
+      clearNetworkActivity,
+      getNetworkActivity,
+      getNetworkState,
+      listenNetworkState,
+      setOfflineMode,
+    } = await import("@/api/api");
+
+    await expect(getNetworkState()).resolves.toMatchObject({
+      offlineMode: false,
+      active: 0,
+      hosts: [],
+    });
+    await expect(getNetworkActivity()).resolves.toEqual([]);
+    await expect(setOfflineMode(true)).resolves.toMatchObject({ offlineMode: true });
+    await clearNetworkActivity();
+    await expect(listenNetworkState(vi.fn())).resolves.toBeTypeOf("function");
+    expect(invoke).not.toHaveBeenCalled();
+    expect(listen).not.toHaveBeenCalled();
+  });
 });
 
 it("delegates scans and recommendations to Tauri when its runtime is present", async () => {
@@ -221,4 +246,39 @@ it("delegates scans and recommendations to Tauri when its runtime is present", a
   });
   expect(invoke).toHaveBeenNthCalledWith(6, "reset_catalog");
   expect(invoke).toHaveBeenNthCalledWith(7, "refresh_catalog", { consentOnce: false });
+});
+
+it("delegates network gate state and offline changes to Tauri", async () => {
+  Object.defineProperty(window, "__TAURI_INTERNALS__", {
+    configurable: true,
+    value: {},
+  });
+  const state = {
+    offlineMode: true,
+    active: 0,
+    hosts: [],
+    purposes: [],
+    bytesDown: 0,
+  };
+  vi.mocked(invoke)
+    .mockResolvedValueOnce(state)
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce(undefined)
+    .mockResolvedValueOnce(state);
+  const unlisten = vi.fn();
+  vi.mocked(listen).mockResolvedValue(unlisten);
+  const { clearNetworkActivity, getNetworkActivity, getNetworkState, listenNetworkState, setOfflineMode } =
+    await import("@/api/api");
+
+  await expect(getNetworkState()).resolves.toEqual(state);
+  await expect(getNetworkActivity()).resolves.toEqual([]);
+  await clearNetworkActivity();
+  await expect(setOfflineMode(true)).resolves.toEqual(state);
+  await expect(listenNetworkState(vi.fn())).resolves.toBe(unlisten);
+
+  expect(invoke).toHaveBeenNthCalledWith(1, "get_network_state");
+  expect(invoke).toHaveBeenNthCalledWith(2, "get_network_activity");
+  expect(invoke).toHaveBeenNthCalledWith(3, "clear_network_activity");
+  expect(invoke).toHaveBeenNthCalledWith(4, "set_offline_mode", { offlineMode: true });
+  expect(listen).toHaveBeenCalledWith("network://state", expect.any(Function));
 });
