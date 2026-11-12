@@ -92,6 +92,10 @@ fn now_ms() -> Result<u64, NetError> {
         .map_err(|error| NetError::Internal(format!("system clock value is out of range: {error}")))
 }
 
+fn redirect_is_allowed(enforce: bool, purpose: Purpose, url: &Url) -> bool {
+    !enforce || is_allowed(purpose, url)
+}
+
 impl NetGate {
     pub fn new() -> Result<Arc<Self>, NetError> {
         Self::build(true)
@@ -304,7 +308,7 @@ impl NetGate {
                     .and_then(|value| value.to_str().ok())
                     .and_then(|location| current.join(location).ok());
                 match next {
-                    Some(next) if !self.enforce || is_allowed(purpose, &next) => {
+                    Some(next) if redirect_is_allowed(self.enforce, purpose, &next) => {
                         let next_host = next.host_str().unwrap_or("?").to_string();
                         self.update(id, |record| {
                             record.via = (next_host != initial_host).then_some(next_host);
@@ -435,6 +439,18 @@ impl Drop for NetResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejects_disallowed_redirect_targets_when_enforcing() {
+        let blocked =
+            Url::parse("https://example.test/file").expect("blocked test URL should parse");
+        let allowed = Url::parse("https://raw.githubusercontent.com/aangan/catalog.json")
+            .expect("allowed test URL should parse");
+
+        assert!(!redirect_is_allowed(true, Purpose::Catalog, &blocked));
+        assert!(redirect_is_allowed(true, Purpose::Catalog, &allowed));
+        assert!(redirect_is_allowed(false, Purpose::Catalog, &blocked));
+    }
 
     #[test]
     fn activity_log_is_bounded_and_newest_first() {
@@ -587,6 +603,38 @@ mod tests {
             let record = gate.log().expect("log should be readable").remove(0);
             assert_eq!(record.bytes_down, 5);
             assert_eq!(record.ok, Some(true));
+            gate.clear_log().expect("completed request should clear");
+            assert!(gate.log().expect("log should be readable").is_empty());
+        }
+
+        #[tokio::test]
+        async fn bytes_limited_rejects_an_oversized_response() {
+            let (listener, url) = listener().await;
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.expect("request should arrive");
+                read_request(&mut stream).await;
+                stream
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello",
+                    )
+                    .await
+                    .expect("body should be written");
+            });
+
+            let gate = NetGate::new_insecure_for_tests().expect("test gate should build");
+            let response = gate
+                .get(Purpose::Catalog, &url, None)
+                .await
+                .expect("request should succeed");
+            assert_eq!(
+                response.bytes_limited(4).await,
+                Err(NetError::Http("response too large".into()))
+            );
+            server.await.expect("mock server should finish");
+
+            let record = gate.log().expect("log should be readable").remove(0);
+            assert_eq!(record.ok, Some(false));
+            assert_eq!(record.note, "too large");
         }
 
         #[tokio::test]

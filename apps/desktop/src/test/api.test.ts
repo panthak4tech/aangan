@@ -282,3 +282,15 @@ it("delegates network gate state and offline changes to Tauri", async () => {
   expect(invoke).toHaveBeenNthCalledWith(4, "set_offline_mode", { offlineMode: true });
   expect(listen).toHaveBeenCalledWith("network://state", expect.any(Function));
 });
+
+it("opens network access documentation through the native shell", async () => {
+  Object.defineProperty(window, "__TAURI_INTERNALS__", {
+    configurable: true,
+    value: {},
+  });
+  vi.mocked(invoke).mockResolvedValue(undefined);
+  const { openNetworkDocs } = await import("@/api/api");
+
+  await expect(openNetworkDocs()).resolves.toBeUndefined();
+  expect(invoke).toHaveBeenCalledWith("open_network_docs");
+});

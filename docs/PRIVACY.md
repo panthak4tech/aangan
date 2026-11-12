@@ -13,3 +13,11 @@ The bundled catalog remains available offline. See
 Offline mode in Settings blocks new network requests and cancels in-progress
 requests, even when catalog refresh consent has been saved. Recent network
 activity is kept in memory on the PC only and is cleared when Aangan closes.
+The Network access details link opens [the network policy](./NETWORK.md) in the
+system browser after the user selects it; that browser request is outside
+Aangan's in-app activity log. The policy lists all gate-allowed hosts and
+identifies which downloader/runtime hosts are reserved for future features.
+The chip and activity log cover Aangan's gated requests only, not other
+applications' traffic. Aangan does not launch a local runtime yet; planned
+runtime support will be restricted to loopback and will not make outbound
+requests.

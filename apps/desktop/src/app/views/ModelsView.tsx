@@ -115,6 +115,8 @@ export function ModelsView({ profile, onOpenModel }: Props) {
         toast(t.signatureUntrusted, { variant: "destructive" });
       } else if (message === "catalog_signature:malformed") {
         toast(t.signatureMalformed, { variant: "destructive" });
+      } else if (message.startsWith("Offline mode is on.")) {
+        toast(message, { variant: "destructive" });
       } else {
         setRefreshError(t.refreshFailed(message));
       }

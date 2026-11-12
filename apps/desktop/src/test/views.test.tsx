@@ -13,6 +13,7 @@ import {
   recommendModels,
   refreshCatalog,
   resetCatalog,
+  openNetworkDocs,
   saveHardwareReport,
   scanHardware,
   setCatalogRefreshConsent,
@@ -46,6 +47,7 @@ vi.mock("@/api/api", async () => {
     getNetworkActivity: vi.fn(),
     getNetworkState: vi.fn(),
     listenNetworkState: vi.fn(),
+    openNetworkDocs: vi.fn(),
     recommendModels: vi.fn(),
     refreshCatalog: vi.fn(),
     resetCatalog: vi.fn(),
@@ -88,6 +90,7 @@ beforeEach(() => {
   vi.mocked(getNetworkActivity).mockResolvedValue([]);
   vi.mocked(listenNetworkState).mockResolvedValue(vi.fn());
   vi.mocked(clearNetworkActivity).mockResolvedValue();
+  vi.mocked(openNetworkDocs).mockResolvedValue();
   vi.mocked(setOfflineMode).mockImplementation(async (offlineMode) => ({
     ...networkState,
     offlineMode,
@@ -297,6 +300,21 @@ describe("ModelsView", () => {
     expect(
       await screen.findByText(en.views.models.refreshFailed("network unavailable")),
     ).toBeInTheDocument();
+  });
+
+  it("shows Offline mode refresh failures in a toast", async () => {
+    const message = "Offline mode is on. Turn it off in Settings to use the network.";
+    vi.mocked(recommendModels).mockResolvedValue(
+      rankModels(PRESETS.desktop_3060, MODELS, 4096),
+    );
+    vi.mocked(refreshCatalog).mockRejectedValueOnce(new Error(message));
+    renderModelsView(PRESETS.desktop_3060);
+
+    fireEvent.click(await screen.findByRole("button", { name: en.views.models.refreshCatalog }));
+    fireEvent.click(screen.getByRole("button", { name: en.views.models.refreshOnce }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent(message);
+    expect(screen.queryByText(en.views.models.refreshFailed(message))).not.toBeInTheDocument();
   });
 
   it.each([
@@ -517,15 +535,46 @@ describe("SettingsView and FirstRunWizard", () => {
     });
     render(<ToastProvider><SettingsView /></ToastProvider>);
 
-    expect(await screen.findByText("raw.githubusercontent.com")).toBeInTheDocument();
-    const offlineCheckbox = screen.getByRole("checkbox", { name: /Offline mode/ });
+    const offlineCheckbox = await screen.findByRole("checkbox", { name: /Offline mode/ });
     expect(offlineCheckbox).not.toBeChecked();
     fireEvent.click(offlineCheckbox);
     await waitFor(() => expect(setOfflineMode).toHaveBeenCalledWith(true));
     await waitFor(() => expect(offlineCheckbox).toBeChecked());
 
+    fireEvent.click(await screen.findByRole("button", { name: en.views.settings.network.seeActivity }));
+    expect(await screen.findByText("raw.githubusercontent.com")).toBeInTheDocument();
+    expect(screen.getByText("Model list")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: en.views.settings.network.clearActivity }));
     await waitFor(() => expect(clearNetworkActivity).toHaveBeenCalledOnce());
+  });
+
+  it("opens network documentation from Privacy settings", async () => {
+    render(<ToastProvider><SettingsView /></ToastProvider>);
+
+    fireEvent.click(await screen.findByRole("button", { name: en.views.settings.privacy.networkDetails }));
+
+    await waitFor(() => expect(openNetworkDocs).toHaveBeenCalledOnce());
+  });
+
+  it("shows the full retained network activity list on the Activity page", async () => {
+    const records = Array.from({ length: 12 }, (_, index) => ({
+      id: index + 1,
+      startedMs: Date.parse("2026-10-22T13:30:00Z") + index,
+      purpose: "catalog" as const,
+      host: `host-${index + 1}.example`,
+      via: null,
+      bytesDown: 128,
+      ok: true,
+      note: "ok",
+    }));
+    vi.mocked(getNetworkActivity).mockResolvedValue(records);
+    render(<ToastProvider><SettingsView /></ToastProvider>);
+
+    fireEvent.click(await screen.findByRole("button", { name: en.views.settings.network.seeActivity }));
+
+    expect(await screen.findByText("host-12.example")).toBeInTheDocument();
+    expect(screen.getByText("host-1.example")).toBeInTheDocument();
+    expect(screen.getByRole("table")).toBeInTheDocument();
   });
 
   it("updates active network status from gate events", async () => {

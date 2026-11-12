@@ -57,6 +57,16 @@ fn open_aangan_repository(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn open_network_docs(app: tauri::AppHandle) -> Result<(), String> {
+    app.opener()
+        .open_url(
+            "https://github.com/panthak4tech/aangan/blob/main/docs/NETWORK.md",
+            None::<&str>,
+        )
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn open_third_party_notices(app: tauri::AppHandle) -> Result<(), String> {
     let path = app
         .path()
@@ -253,6 +263,7 @@ pub fn run() -> Result<(), tauri::Error> {
             clear_network_activity,
             set_offline_mode,
             open_aangan_repository,
+            open_network_docs,
             open_third_party_notices,
             save_text_file,
             get_app_paths
