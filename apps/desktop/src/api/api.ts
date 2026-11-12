@@ -114,6 +114,13 @@ export async function refreshCatalog(consentOnce: boolean): Promise<CatalogRefre
   return invoke<CatalogRefreshResult>("refresh_catalog", { consentOnce });
 }
 
+export async function openNetworkDocs(): Promise<void> {
+  if (!inTauri) {
+    throw new Error("Network access details are available only in the desktop app.");
+  }
+  return invoke<void>("open_network_docs");
+}
+
 export async function getNetworkState(): Promise<NetworkState> {
   if (!inTauri) {
     return {

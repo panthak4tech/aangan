@@ -6,6 +6,9 @@ Find out which open AI models your PC can run, and how fast, before you download
 > hardware details never leave your PC. The optional **Refresh catalog** action
 > contacts `raw.githubusercontent.com` only with your permission.
 
+See [Network access](docs/NETWORK.md) for the complete host allow-list, request
+purposes, and privacy details.
+
 ## Install
 
 Download the Windows installer from [Releases](https://github.com/panthak4tech/aangan/releases), run it, and open Aangan. The installer also bundles the CLI. Select the optional current-user PATH setting during installation to run `aangan` from any terminal, or use the executable directly:

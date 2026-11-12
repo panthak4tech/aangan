@@ -12,6 +12,7 @@ import { ScanView } from "./views/ScanView";
 import { SettingsView } from "./views/SettingsView";
 import { ModelDetailDialog } from "./models/ModelDetailDialog";
 import { FirstRunWizard } from "./wizard/FirstRunWizard";
+import { NetworkStatusChip } from "./NetworkStatusChip";
 
 export function AppShell() {
   const [view, setView] = useState<View>("scan");
@@ -22,6 +23,17 @@ export function AppShell() {
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState(false);
   const [selected, setSelected] = useState<Recommendation | null>(null);
+  const [networkActivityOpen, setNetworkActivityOpen] = useState(false);
+
+  const changeView = (nextView: View) => {
+    setView(nextView);
+    if (nextView !== "settings") setNetworkActivityOpen(false);
+  };
+
+  const openNetworkActivity = () => {
+    setView("settings");
+    setNetworkActivityOpen(true);
+  };
 
   const rescan = async () => {
     setScanning(true);
@@ -39,7 +51,7 @@ export function AppShell() {
     <ToastProvider>
       <TooltipProvider delayDuration={200}>
         <div className="flex h-screen w-full min-w-[900px] overflow-hidden bg-background text-foreground">
-          {onboarded && <NavRail view={view} onChange={setView} />}
+          {onboarded && <NavRail view={view} onChange={changeView} />}
           <div className="flex min-w-0 flex-1 flex-col">
             <header className="flex h-14 shrink-0 items-center justify-between border-b border-border px-8">
               <div className="flex items-center gap-3">
@@ -49,7 +61,13 @@ export function AppShell() {
                   <span className="text-xs text-muted-foreground">{en.app.tagline}</span>
                 </div>
               </div>
-              <DevPresetSwitch />
+              <div className="flex items-center gap-3">
+                <NetworkStatusChip
+                  canViewActivity={onboarded}
+                  onShowActivity={openNetworkActivity}
+                />
+                <DevPresetSwitch />
+              </div>
             </header>
             <main className="flex flex-1 flex-col overflow-auto p-8">
               <div className="mx-auto flex w-full max-w-[1400px] flex-1 flex-col">
@@ -68,7 +86,12 @@ export function AppShell() {
                       <ScanView profile={profile} scanning={scanning} scanError={scanError} onRescan={rescan} />
                     )}
                     {view === "models" && <ModelsView profile={profile} onOpenModel={setSelected} />}
-                    {view === "settings" && <SettingsView />}
+                    {view === "settings" && (
+                      <SettingsView
+                        openNetworkActivity={networkActivityOpen}
+                        onCloseNetworkActivity={() => setNetworkActivityOpen(false)}
+                      />
+                    )}
                   </>
                 )}
               </div>

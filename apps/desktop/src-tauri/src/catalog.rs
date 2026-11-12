@@ -1164,6 +1164,11 @@ mod tests {
 
         assert!(error.contains("Offline mode is on"));
         assert!(!cache_path(directory.path()).exists());
+        assert!(
+            gate.log()
+                .expect("network log should be readable")
+                .is_empty()
+        );
     }
 
     #[tokio::test]
