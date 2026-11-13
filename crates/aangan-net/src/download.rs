@@ -194,15 +194,48 @@ fn check_disk_space(size: u64, offset: u64, free: u64) -> Result<(), DlError> {
 }
 
 async fn existing_part_len(path: &Path) -> Result<u64, DlError> {
-    match fs::metadata(path).await {
-        Ok(metadata) if metadata.is_file() => Ok(metadata.len()),
+    match fs::symlink_metadata(path).await {
+        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+            Ok(metadata.len())
+        }
         Ok(_) => Err(DlError::Io(format!(
-            "partial download path is not a file: {}",
+            "partial download path is not a regular file: {}",
             path.display()
         ))),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(0),
         Err(error) => Err(io_error(error)),
     }
+}
+
+fn open_part_file(path: &Path, append: bool) -> Result<fs::File, DlError> {
+    let mut options = std::fs::OpenOptions::new();
+    if append {
+        options.append(true);
+    } else {
+        options.write(true).create(true).truncate(true);
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+
+    let file = options.open(path).map_err(io_error)?;
+    let metadata = file.metadata().map_err(io_error)?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err(DlError::Io(format!(
+            "partial download path is not a regular file: {}",
+            path.display()
+        )));
+    }
+    Ok(fs::File::from_std(file))
 }
 
 async fn remove_part(path: &Path) -> Result<(), DlError> {
@@ -268,15 +301,7 @@ where
             }
         }
 
-        let mut file = if offset == 0 {
-            fs::File::create(&part).await.map_err(io_error)?
-        } else {
-            fs::OpenOptions::new()
-                .append(true)
-                .open(&part)
-                .await
-                .map_err(io_error)?
-        };
+        let mut file = open_part_file(&part, offset > 0)?;
         let mut meter = SpeedMeter::new(done);
         let mut last_report = Instant::now();
         loop {
@@ -352,6 +377,11 @@ mod tests {
         routing::get,
         Router,
     };
+    use bytes::Bytes;
+    use futures_util::stream;
+    use std::convert::Infallible;
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
     use std::sync::Mutex;
     use tokio::{net::TcpListener, task::JoinHandle};
 
@@ -403,6 +433,8 @@ mod tests {
         bytes: Vec<u8>,
         ignore_range: bool,
         content_length: Option<u64>,
+        chunk_size: Option<usize>,
+        chunk_delay: Duration,
     }
 
     struct TestServer {
@@ -436,6 +468,26 @@ mod tests {
             body.truncate(usize::try_from(length).unwrap_or(usize::MAX));
         }
         let length = config.content_length.unwrap_or(body.len() as u64);
+        let response_body = if let Some(chunk_size) = config.chunk_size {
+            let bytes = body;
+            let chunk_delay = config.chunk_delay;
+            Body::from_stream(stream::unfold(
+                (bytes, 0),
+                move |(bytes, offset)| async move {
+                    if offset >= bytes.len() {
+                        return None;
+                    }
+                    if !chunk_delay.is_zero() {
+                        tokio::time::sleep(chunk_delay).await;
+                    }
+                    let end = offset.saturating_add(chunk_size).min(bytes.len());
+                    let chunk = Bytes::copy_from_slice(&bytes[offset..end]);
+                    Some((Ok::<_, Infallible>(chunk), (bytes, end)))
+                },
+            ))
+        } else {
+            Body::from(body)
+        };
         let mut builder = Response::builder().status(status).header(
             header::CONTENT_LENGTH,
             HeaderValue::from_str(&length.to_string()).expect("content length is valid"),
@@ -449,7 +501,7 @@ mod tests {
             );
         }
         builder
-            .body(Body::from(body))
+            .body(response_body)
             .expect("test response should be valid")
     }
 
@@ -503,6 +555,8 @@ mod tests {
             bytes: bytes.clone(),
             ignore_range: false,
             content_length: None,
+            chunk_size: None,
+            chunk_delay: Duration::ZERO,
         })
         .await;
         let directory = tempfile::tempdir().expect("temporary directory");
@@ -540,6 +594,8 @@ mod tests {
             bytes: bytes.clone(),
             ignore_range: false,
             content_length: None,
+            chunk_size: None,
+            chunk_delay: Duration::ZERO,
         })
         .await;
         let directory = tempfile::tempdir().expect("temporary directory");
@@ -570,6 +626,8 @@ mod tests {
             bytes: bytes.clone(),
             ignore_range: true,
             content_length: None,
+            chunk_size: None,
+            chunk_delay: Duration::ZERO,
         })
         .await;
         let directory = tempfile::tempdir().expect("temporary directory");
@@ -594,6 +652,8 @@ mod tests {
             bytes: bytes.clone(),
             ignore_range: false,
             content_length: None,
+            chunk_size: None,
+            chunk_delay: Duration::ZERO,
         })
         .await;
         let directory = tempfile::tempdir().expect("temporary directory");
@@ -619,6 +679,8 @@ mod tests {
             bytes: bytes.clone(),
             ignore_range: false,
             content_length: Some(2),
+            chunk_size: None,
+            chunk_delay: Duration::ZERO,
         })
         .await;
         let directory = tempfile::tempdir().expect("temporary directory");
@@ -643,28 +705,116 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancellation_keeps_partial_download() {
-        let bytes = b"model bytes".to_vec();
+    async fn cancellation_after_streaming_bytes_keeps_resumable_partial() {
+        let bytes = vec![b'm'; 2 * 1024 * 1024];
         let server = start_server(ServerConfig {
             bytes: bytes.clone(),
             ignore_range: false,
             content_length: None,
+            chunk_size: Some(64 * 1024),
+            chunk_delay: Duration::from_millis(5),
         })
         .await;
         let directory = tempfile::tempdir().expect("temporary directory");
         let dest = directory.path().join("model.gguf");
         let part = part_path(&dest);
-        fs::write(&part, &bytes[..5]).await.expect("partial file");
-        let spec = spec(server.url.clone(), dest, &bytes);
+        let spec = spec(server.url.clone(), dest.clone(), &bytes);
         let gate = NetGate::new_insecure_for_tests().expect("test network gate");
         let cancellation = CancellationToken::new();
-        cancellation.cancel();
+        let cancel_after_write = cancellation.clone();
+        let wait_for_bytes = part.clone();
+        let cancel_task = tokio::spawn(async move {
+            let started = Instant::now();
+            loop {
+                if std::fs::metadata(&wait_for_bytes).is_ok_and(|metadata| metadata.len() > 0) {
+                    cancel_after_write.cancel();
+                    return true;
+                }
+                if started.elapsed() > Duration::from_secs(10) {
+                    return false;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        });
 
         let error = download(&gate, &spec, &cancellation, |_| {})
             .await
             .expect_err("cancelled download should stop");
+        assert!(cancel_task.await.expect("cancel task should complete"));
 
         assert!(matches!(error, DlError::Cancelled));
-        assert_eq!(fs::read(part).await.expect("partial file"), bytes[..5]);
+        let partial = fs::read(&part).await.expect("partial file");
+        assert!(!partial.is_empty());
+        assert!(partial.len() < bytes.len());
+
+        download(&gate, &spec, &CancellationToken::new(), |_| {})
+            .await
+            .expect("partial download should resume");
+        assert_eq!(fs::read(dest).await.expect("downloaded file"), bytes);
+    }
+
+    #[tokio::test]
+    async fn cancellation_during_hashing_keeps_partial_file_for_retry() {
+        let bytes = vec![b'h'; 2 * 1024 * 1024];
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let dest = directory.path().join("model.gguf");
+        let part = part_path(&dest);
+        fs::write(&part, &bytes)
+            .await
+            .expect("complete partial file");
+        let spec = spec("http://127.0.0.1/model.gguf".into(), dest.clone(), &bytes);
+        let gate = NetGate::new_insecure_for_tests().expect("test network gate");
+        let cancellation = CancellationToken::new();
+        let callback_cancel = cancellation.clone();
+
+        let error = download(&gate, &spec, &cancellation, move |progress| {
+            if progress.state == DlState::Verifying && progress.done > 0 {
+                callback_cancel.cancel();
+            }
+        })
+        .await
+        .expect_err("cancelled hashing should stop");
+
+        assert!(matches!(error, DlError::Cancelled));
+        assert_eq!(fs::read(&part).await.expect("partial file"), bytes);
+
+        download(&gate, &spec, &CancellationToken::new(), |_| {})
+            .await
+            .expect("retry should verify and finish");
+        assert_eq!(fs::read(dest).await.expect("downloaded file"), bytes);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn rejects_symlinked_partial_before_reading_or_opening_it() {
+        let bytes = b"model bytes".to_vec();
+        let server = start_server(ServerConfig {
+            bytes: bytes.clone(),
+            ignore_range: false,
+            content_length: None,
+            chunk_size: None,
+            chunk_delay: Duration::ZERO,
+        })
+        .await;
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let dest = directory.path().join("model.gguf");
+        let outside = directory.path().join("outside");
+        fs::write(&outside, b"outside file")
+            .await
+            .expect("outside file");
+        symlink(&outside, part_path(&dest)).expect("partial symlink");
+        let spec = spec(server.url.clone(), dest, &bytes);
+        let gate = NetGate::new_insecure_for_tests().expect("test network gate");
+
+        let error = download(&gate, &spec, &CancellationToken::new(), |_| {})
+            .await
+            .expect_err("symlinked partial should be rejected");
+
+        assert!(matches!(error, DlError::Io(_)));
+        assert!(open_part_file(&part_path(&spec.dest), true).is_err());
+        assert_eq!(
+            fs::read(outside).await.expect("outside file"),
+            b"outside file"
+        );
     }
 }

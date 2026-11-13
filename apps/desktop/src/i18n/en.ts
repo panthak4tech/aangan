@@ -246,6 +246,8 @@ export const en = {
         loading: "Loading model storage",
         loadFailed: (reason: string) => `Couldn't read model storage: ${reason}`,
         retry: "Retry",
+        refresh: "Refresh storage",
+        refreshing: "Refreshing storage...",
         folder: "Model folder",
         chooseFolder: "Choose folder",
         saveFailed: (reason: string) => `Couldn't change the model folder: ${reason}`,
@@ -261,7 +263,8 @@ export const en = {
         showInFolder: "Show in folder",
         showInFolderFailed: (reason: string) => `Couldn't open the file folder: ${reason}`,
         deleteTitle: "Delete this file?",
-        deleteDescription: (name: string) => `This permanently deletes ${name}.`,
+        deleteDescription: (name: string, path: string) =>
+          `This permanently deletes ${name} at ${path}.`,
         cancelDelete: "Keep file",
         confirmDelete: "Delete file",
         deleteFailed: (reason: string) => `Couldn't delete the file: ${reason}`,

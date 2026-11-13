@@ -101,7 +101,8 @@ pub fn download_spec(root: &Path, model: &ModelDownloadInfo) -> Result<DownloadS
     if !root.is_absolute() || !is_single_path_component(&model.family) {
         return Err("The model folder or family path is invalid.".into());
     }
-    if !is_single_path_component(&model.file) || !model.file.ends_with(".gguf") {
+    if !is_single_path_component(&model.file) || !model.file.to_ascii_lowercase().ends_with(".gguf")
+    {
         return Err("The model filename is invalid.".into());
     }
     Ok(DownloadSpec {
@@ -465,6 +466,26 @@ mod tests {
     fn validates_minimum_free_space() {
         assert!(ensure_free_space(MIN_MODEL_FOLDER_FREE_BYTES - 1).is_err());
         assert!(ensure_free_space(MIN_MODEL_FOLDER_FREE_BYTES).is_ok());
+    }
+
+    #[test]
+    fn accepts_case_insensitive_model_file_extensions() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let info = ModelDownloadInfo {
+            id: "model-q4".into(),
+            family: "qwen".into(),
+            file: "model.GGUF".into(),
+            size_bytes: 10,
+            sha256: "0".repeat(64),
+            url: "https://huggingface.co/model".into(),
+        };
+
+        let spec = download_spec(temp.path(), &info).expect("case-insensitive extension");
+
+        assert_eq!(
+            spec.dest.file_name().unwrap().to_string_lossy(),
+            "model.GGUF"
+        );
     }
 
     #[tokio::test]

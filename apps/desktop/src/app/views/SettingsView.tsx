@@ -6,6 +6,7 @@ import {
   Info,
   Languages,
   Monitor,
+  RefreshCw,
   ShieldCheck,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -434,6 +435,14 @@ export function SettingsView({
               {storageInfo.modelFolder}
             </code>
             <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                onClick={() => void refreshStorageInfo()}
+                disabled={storageLoading}
+              >
+                <RefreshCw />
+                {storageLoading ? t.storage.refreshing : t.storage.refresh}
+              </Button>
               <Button variant="outline" onClick={() => void chooseStorageFolder()} disabled={storageSaving}>
                 {t.storage.chooseFolder}
               </Button>
@@ -610,7 +619,7 @@ export function SettingsView({
           <DialogHeader>
             <DialogTitle>{t.storage.deleteTitle}</DialogTitle>
             <DialogDescription>
-              {t.storage.deleteDescription(deletingFile?.name ?? "")}
+              {t.storage.deleteDescription(deletingFile?.name ?? "", deletingFile?.path ?? "")}
             </DialogDescription>
           </DialogHeader>
           {deleteError && <p role="alert" className="text-sm text-destructive">{deleteError}</p>}
@@ -667,6 +676,7 @@ function StorageFileList({
             >
               <div className="min-w-0">
                 <p className="break-all text-sm text-foreground">{file.name}</p>
+                <p className="break-all text-xs text-muted-foreground">{file.path}</p>
                 <p className="text-xs text-muted-foreground">{formatTransferSize(file.sizeBytes)}</p>
               </div>
               <div className="flex gap-2">

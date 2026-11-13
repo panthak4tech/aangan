@@ -60,6 +60,7 @@ function useDownloadController(): DownloadsController {
   const [items, setItems] = useState<Record<string, DownloadProgress>>({});
   const [error, setError] = useState<string | null>(null);
   const eventVersions = useRef(new Map<string, number>());
+  const attempts = useRef(new Map<string, number>());
   const forgottenIds = useRef(new Set<string>());
 
   useEffect(() => {
@@ -106,17 +107,27 @@ function useDownloadController(): DownloadsController {
   }), [items]);
   const runCommand = async (
     id: string,
+    attempt: number,
     command: () => Promise<DownloadProgress>,
   ): Promise<DownloadProgress> => {
     const version = eventVersions.current.get(id) ?? 0;
     const progress = await command();
-    if ((eventVersions.current.get(id) ?? 0) === version) {
+    if (
+      attempts.current.get(id) === attempt
+      && (eventVersions.current.get(id) ?? 0) === version
+    ) {
       setItems((previous) => ({ ...previous, [id]: progress }));
     }
     return progress;
   };
+  const nextAttempt = (id: string) => {
+    const attempt = (attempts.current.get(id) ?? 0) + 1;
+    attempts.current.set(id, attempt);
+    return attempt;
+  };
   const forget = (id: string) => {
     forgottenIds.current.add(id);
+    nextAttempt(id);
     eventVersions.current.set(id, (eventVersions.current.get(id) ?? 0) + 1);
     setItems((previous) => {
       const next = { ...previous };
@@ -131,14 +142,26 @@ function useDownloadController(): DownloadsController {
     error,
     start: (modelId: string, profile: HardwareProfile, context: number) => {
       forgottenIds.current.delete(modelId);
+      const attempt = nextAttempt(modelId);
       eventVersions.current.set(modelId, (eventVersions.current.get(modelId) ?? 0) + 1);
-      return runCommand(modelId, () => startDownload(modelId, profile, context));
+      return runCommand(modelId, attempt, () => startDownload(modelId, profile, context));
     },
-    pause: (id: string) => runCommand(id, () => pauseDownload(id)),
-    resume: (id: string) => runCommand(id, () => resumeDownload(id)),
+    pause: (id: string) => {
+      const attempt = nextAttempt(id);
+      return runCommand(id, attempt, () => pauseDownload(id));
+    },
+    resume: (id: string) => {
+      const attempt = nextAttempt(id);
+      return runCommand(id, attempt, () => resumeDownload(id));
+    },
     cancel: async (id: string, deletePartial: boolean) => {
-      const progress = await runCommand(id, () => cancelDownload(id, deletePartial));
-      if (deletePartial && progress.state.kind === "cancelled") {
+      const attempt = nextAttempt(id);
+      const progress = await runCommand(id, attempt, () => cancelDownload(id, deletePartial));
+      if (
+        attempts.current.get(id) === attempt
+        && deletePartial
+        && progress.state.kind === "cancelled"
+      ) {
         forget(id);
       }
       return progress;

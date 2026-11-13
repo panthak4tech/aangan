@@ -1,7 +1,7 @@
-use aangan_net::download::part_path;
+use aangan_net::download::{part_path, sha256_file};
 use aangan_net::{DlError, DlState, DownloadSpec, NetError, NetGate, Progress, download};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     future::Future,
     path::{Path, PathBuf},
     pin::Pin,
@@ -9,6 +9,7 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
+    time::SystemTime,
 };
 use tokio::sync::{Notify, mpsc};
 use tokio_util::sync::CancellationToken;
@@ -27,6 +28,8 @@ pub struct DownloadManager {
 struct ManagerInner {
     sender: mpsc::Sender<String>,
     entries: Mutex<HashMap<String, DownloadEntry>>,
+    storage_operations: Mutex<()>,
+    reserved_storage_paths: Mutex<HashSet<PathBuf>>,
     on_event: EventCallback,
     offline: AtomicBool,
 }
@@ -37,8 +40,32 @@ struct DownloadEntry {
     cancellation: CancellationToken,
     stop: Option<StopAction>,
     worker_running: bool,
+    queued: bool,
     resume_when_online: bool,
+    deleting: bool,
+    verified_file: Option<FileFingerprint>,
     worker_finished: Arc<Notify>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FileFingerprint {
+    size: u64,
+    modified: Option<SystemTime>,
+    created: Option<SystemTime>,
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+    #[cfg(windows)]
+    volume_serial_number: Option<u32>,
+    #[cfg(windows)]
+    file_index: Option<u64>,
+}
+
+struct RestoreInspection {
+    spec: DownloadSpec,
+    complete_file: Option<FileFingerprint>,
+    partial_size: Option<u64>,
 }
 
 #[derive(Clone, Copy)]
@@ -77,6 +104,8 @@ impl DownloadManager {
         let inner = Arc::new(ManagerInner {
             sender,
             entries: Mutex::new(HashMap::new()),
+            storage_operations: Mutex::new(()),
+            reserved_storage_paths: Mutex::new(HashSet::new()),
             on_event,
             offline: AtomicBool::new(offline),
         });
@@ -84,58 +113,65 @@ impl DownloadManager {
         Self { inner }
     }
 
-    pub fn restore(&self, specs: Vec<DownloadSpec>) -> Result<(), String> {
-        for spec in &specs {
-            if !safe_existing_parent(&spec.dest)? {
-                continue;
-            }
-            match std::fs::symlink_metadata(&spec.dest) {
-                Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
-                    if metadata.len() == spec.size {
-                        self.insert_restored(spec.clone(), DlState::Done, spec.size)?;
+    pub async fn restore(&self, specs: Vec<DownloadSpec>) -> Result<(), String> {
+        let inspections = tokio::task::spawn_blocking(move || inspect_restore_files(specs))
+            .await
+            .map_err(|error| error.to_string())??;
+        for inspection in &inspections {
+            let spec = &inspection.spec;
+            let verified_file = match inspection.complete_file.as_ref() {
+                Some(file) if file.size == spec.size => {
+                    if self.has_verified_done(spec, file)? {
+                        Some(file.clone())
+                    } else {
+                        completed_file_fingerprint(spec).await?
                     }
                 }
-                Ok(_) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => {
-                    return Err(format!(
-                        "could not inspect downloaded model {}: {error}",
-                        spec.dest.display()
-                    ));
-                }
+                _ => None,
+            };
+            if let Some(file) = verified_file {
+                self.insert_restored(spec.clone(), DlState::Done, spec.size, Some(file))?;
+            } else {
+                self.invalidate_done(spec)?;
             }
         }
-        for spec in specs {
+        for inspection in inspections {
+            let spec = inspection.spec;
             if self.get(&spec.id)?.is_some() {
                 continue;
             }
-            if !safe_existing_parent(&spec.dest)? {
-                continue;
-            }
-            let partial = part_path(&spec.dest);
-            match std::fs::symlink_metadata(&partial) {
-                Ok(metadata)
-                    if metadata.is_file()
-                        && !metadata.file_type().is_symlink()
-                        && metadata.len() > 0
-                        && metadata.len() <= spec.size =>
-                {
-                    self.insert_restored(spec.clone(), DlState::Paused, metadata.len())?;
-                }
-                Ok(_) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => {
-                    return Err(format!(
-                        "could not inspect partial model download {}: {error}",
-                        partial.display()
-                    ));
-                }
+            if let Some(size) = inspection.partial_size {
+                self.insert_restored(spec, DlState::Paused, size, None)?;
             }
         }
         Ok(())
     }
 
-    fn insert_restored(&self, spec: DownloadSpec, state: DlState, done: u64) -> Result<(), String> {
+    fn insert_restored(
+        &self,
+        spec: DownloadSpec,
+        state: DlState,
+        done: u64,
+        verified_file: Option<FileFingerprint>,
+    ) -> Result<(), String> {
+        let _operation = self
+            .inner
+            .storage_operations
+            .lock()
+            .map_err(|error| format!("storage operation state is unavailable: {error}"))?;
+        self.insert_restored_locked(spec, state, done, verified_file)
+    }
+
+    fn insert_restored_locked(
+        &self,
+        spec: DownloadSpec,
+        state: DlState,
+        done: u64,
+        verified_file: Option<FileFingerprint>,
+    ) -> Result<(), String> {
+        if self.storage_path_reserved(&spec.dest)? {
+            return Ok(());
+        }
         let progress = Progress {
             id: spec.id.clone(),
             state,
@@ -150,16 +186,21 @@ impl DownloadManager {
             .lock()
             .map_err(|error| format!("download state is unavailable: {error}"))?;
         if let Some(entry) = entries.get_mut(&spec.id) {
-            if matches!(
-                entry.progress.state,
-                DlState::Queued | DlState::Downloading | DlState::Verifying
-            ) {
+            if entry.deleting
+                || matches!(
+                    entry.progress.state,
+                    DlState::Queued | DlState::Downloading | DlState::Verifying
+                )
+            {
                 return Ok(());
             }
             entry.spec = spec;
             entry.progress = progress.clone();
             entry.cancellation = CancellationToken::new();
             entry.stop = None;
+            entry.queued = false;
+            entry.deleting = false;
+            entry.verified_file = verified_file;
         } else {
             entries.insert(
                 spec.id.clone(),
@@ -169,7 +210,10 @@ impl DownloadManager {
                     cancellation: CancellationToken::new(),
                     stop: None,
                     worker_running: false,
+                    queued: false,
                     resume_when_online: false,
+                    deleting: false,
+                    verified_file,
                     worker_finished: Arc::new(Notify::new()),
                 },
             );
@@ -180,38 +224,55 @@ impl DownloadManager {
     }
 
     pub async fn start(&self, spec: DownloadSpec) -> Result<Progress, String> {
-        if let Some(existing) = self.get(&spec.id)? {
-            if matches!(
-                existing.state,
-                DlState::Queued
-                    | DlState::Downloading
-                    | DlState::Verifying
-                    | DlState::Paused
-                    | DlState::Cancelled
-                    | DlState::Failed(_)
-            ) {
-                return Ok(existing);
+        {
+            let _operation = self
+                .inner
+                .storage_operations
+                .lock()
+                .map_err(|error| format!("storage operation state is unavailable: {error}"))?;
+            if self.storage_path_reserved(&spec.dest)? {
+                return Err("the model file is being changed in Storage".into());
             }
-            if existing.state == DlState::Done {
-                let existing_spec = self
-                    .get_spec(&spec.id)?
-                    .ok_or_else(|| format!("no download exists for {}", spec.id))?;
-                match std::fs::symlink_metadata(&existing_spec.dest) {
-                    Ok(metadata)
-                        if metadata.is_file()
-                            && !metadata.file_type().is_symlink()
-                            && metadata.len() == existing_spec.size =>
-                    {
-                        return Ok(existing);
-                    }
-                    Ok(_) => {}
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(error) => {
-                        return Err(format!(
-                            "could not inspect model destination {}: {error}",
-                            existing_spec.dest.display()
-                        ));
-                    }
+            match self.get(&spec.id)? {
+                Some(existing)
+                    if matches!(
+                        existing.state,
+                        DlState::Queued
+                            | DlState::Downloading
+                            | DlState::Verifying
+                            | DlState::Paused
+                            | DlState::Cancelled
+                            | DlState::Failed(_)
+                    ) =>
+                {
+                    return Ok(existing);
+                }
+                _ => {}
+            }
+        }
+        let existing_done = match self.get(&spec.id)? {
+            Some(existing) if existing.state == DlState::Done => self
+                .get_spec(&spec.id)?
+                .map(|existing_spec| (existing, existing_spec)),
+            _ => None,
+        };
+        if let Some((existing, existing_spec)) = existing_done {
+            let mut current_spec = spec.clone();
+            current_spec.dest = existing_spec.dest;
+            if let Some(fingerprint) = completed_file_fingerprint(&current_spec).await? {
+                let _operation =
+                    self.inner.storage_operations.lock().map_err(|error| {
+                        format!("storage operation state is unavailable: {error}")
+                    })?;
+                if self.storage_path_reserved(&current_spec.dest)? {
+                    return Err("the model file is being changed in Storage".into());
+                }
+                if current_file_fingerprint(&current_spec.dest)? == Some(fingerprint)
+                    && self
+                        .get(&spec.id)?
+                        .is_some_and(|current| current.state == DlState::Done)
+                {
+                    return Ok(existing);
                 }
             }
         }
@@ -223,16 +284,39 @@ impl DownloadManager {
                         spec.dest.display()
                     ));
                 }
-                let progress = Progress {
-                    id: spec.id.clone(),
-                    state: DlState::Done,
-                    done: spec.size,
-                    total: spec.size,
-                    bytes_per_sec: 0,
-                    eta_secs: None,
-                };
-                self.insert_restored(spec, DlState::Done, progress.done)?;
-                return Ok(progress);
+                if let Some(verified_file) = completed_file_fingerprint(&spec).await? {
+                    let _operation = self.inner.storage_operations.lock().map_err(|error| {
+                        format!("storage operation state is unavailable: {error}")
+                    })?;
+                    if self.storage_path_reserved(&spec.dest)? {
+                        return Err("the model file is being changed in Storage".into());
+                    }
+                    if current_file_fingerprint(&spec.dest)? != Some(verified_file.clone()) {
+                        return Err(format!(
+                            "The model file at {} changed while it was being verified.",
+                            spec.dest.display()
+                        ));
+                    }
+                    let progress = Progress {
+                        id: spec.id.clone(),
+                        state: DlState::Done,
+                        done: spec.size,
+                        total: spec.size,
+                        bytes_per_sec: 0,
+                        eta_secs: None,
+                    };
+                    self.insert_restored_locked(
+                        spec,
+                        DlState::Done,
+                        progress.done,
+                        Some(verified_file),
+                    )?;
+                    return Ok(progress);
+                }
+                return Err(format!(
+                    "The model file at {} does not match the catalog checksum. Delete it from Storage before retrying.",
+                    spec.dest.display()
+                ));
             }
             Ok(_) => {
                 return Err("The model destination is not a regular file.".into());
@@ -260,18 +344,29 @@ impl DownloadManager {
             eta_secs: None,
         };
         {
+            let _operation = self
+                .inner
+                .storage_operations
+                .lock()
+                .map_err(|error| format!("storage operation state is unavailable: {error}"))?;
+            if self.storage_path_reserved(&spec.dest)? {
+                return Err("the model file is being changed in Storage".into());
+            }
             let mut entries = self
                 .inner
                 .entries
                 .lock()
                 .map_err(|error| format!("download state is unavailable: {error}"))?;
-            if let Some(existing) = entries.get(&spec.id)
-                && matches!(
+            if let Some(existing) = entries.get(&spec.id) {
+                if existing.deleting {
+                    return Err("the model file is being changed in Storage".into());
+                }
+                if matches!(
                     existing.progress.state,
-                    DlState::Queued | DlState::Downloading | DlState::Verifying | DlState::Done
-                )
-            {
-                return Ok(existing.progress.clone());
+                    DlState::Queued | DlState::Downloading | DlState::Verifying
+                ) {
+                    return Ok(existing.progress.clone());
+                }
             }
             entries.insert(
                 spec.id.clone(),
@@ -281,7 +376,10 @@ impl DownloadManager {
                     cancellation: CancellationToken::new(),
                     stop: None,
                     worker_running: false,
+                    queued: !offline,
                     resume_when_online: offline,
+                    deleting: false,
+                    verified_file: None,
                     worker_finished: Arc::new(Notify::new()),
                 },
             );
@@ -313,6 +411,9 @@ impl DownloadManager {
             let entry = entries
                 .get_mut(id)
                 .ok_or_else(|| format!("no download exists for {id}"))?;
+            if entry.deleting {
+                return Err("the model file is being changed in Storage".into());
+            }
             match entry.progress.state {
                 DlState::Paused => return Ok(entry.progress.clone()),
                 DlState::Queued | DlState::Downloading | DlState::Verifying => {}
@@ -343,29 +444,38 @@ impl DownloadManager {
             let entry = entries
                 .get_mut(id)
                 .ok_or_else(|| format!("no download exists for {id}"))?;
-            if !matches!(
-                entry.progress.state,
-                DlState::Paused | DlState::Cancelled | DlState::Failed(_)
-            ) {
-                return Err("that download is not paused or failed".into());
+            if entry.deleting {
+                return Err("the model file is being changed in Storage".into());
             }
-            if self.inner.offline.load(Ordering::Acquire) {
-                entry.resume_when_online = true;
-                entry.progress.state = DlState::Paused;
-                entry.progress.bytes_per_sec = 0;
-                entry.progress.eta_secs = None;
-                (entry.progress.clone(), false)
-            } else if entry.worker_running {
-                entry.resume_when_online = true;
+            if entry.progress.state == DlState::Queued && entry.queued {
                 (entry.progress.clone(), false)
             } else {
-                entry.resume_when_online = false;
-                entry.cancellation = CancellationToken::new();
-                entry.stop = None;
-                entry.progress.state = DlState::Queued;
-                entry.progress.bytes_per_sec = 0;
-                entry.progress.eta_secs = None;
-                (entry.progress.clone(), true)
+                if !matches!(
+                    entry.progress.state,
+                    DlState::Paused | DlState::Cancelled | DlState::Failed(_)
+                ) {
+                    return Err("that download is not paused or failed".into());
+                }
+                if self.inner.offline.load(Ordering::Acquire) {
+                    entry.resume_when_online = true;
+                    entry.progress.state = DlState::Paused;
+                    entry.progress.bytes_per_sec = 0;
+                    entry.progress.eta_secs = None;
+                    (entry.progress.clone(), false)
+                } else if entry.worker_running {
+                    entry.resume_when_online = true;
+                    (entry.progress.clone(), false)
+                } else {
+                    entry.resume_when_online = false;
+                    entry.cancellation = CancellationToken::new();
+                    entry.stop = None;
+                    entry.progress.state = DlState::Queued;
+                    entry.progress.bytes_per_sec = 0;
+                    entry.progress.eta_secs = None;
+                    let enqueue = !entry.queued;
+                    entry.queued = true;
+                    (entry.progress.clone(), enqueue)
+                }
             }
         };
         self.publish(progress.clone());
@@ -397,6 +507,9 @@ impl DownloadManager {
             let entry = entries
                 .get_mut(id)
                 .ok_or_else(|| format!("no download exists for {id}"))?;
+            if entry.deleting {
+                return Err("the model file is being changed in Storage".into());
+            }
             if entry.progress.state == DlState::Done {
                 return Err("the model is already downloaded".into());
             }
@@ -416,9 +529,11 @@ impl DownloadManager {
                 publish = Some(entry.progress.clone());
             }
         };
-        if let Some(path) = delete_now
-            && let Err(error) = remove_partial(&path).await
-        {
+        let delete_result = match delete_now {
+            Some(path) => remove_partial(&path).await,
+            None => Ok(()),
+        };
+        if let Err(error) = delete_result {
             self.set_failed(id, &error);
             return Err(error);
         }
@@ -428,6 +543,8 @@ impl DownloadManager {
         if let Some(notify) = wait_for_worker {
             loop {
                 let notified = notify.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
                 if !self.is_worker_running(id)? {
                     break;
                 }
@@ -533,16 +650,144 @@ impl DownloadManager {
             .entries
             .lock()
             .map_err(|error| format!("download state is unavailable: {error}"))?;
-        if let Some(entry) = entries.get(id)
-            && matches!(
+        if let Some(entry) = entries.get(id) {
+            if entry.deleting {
+                return Err("the model file is being changed in Storage".into());
+            }
+            if matches!(
                 entry.progress.state,
                 DlState::Queued | DlState::Downloading | DlState::Verifying
-            )
-        {
-            return Err("pause or cancel the download before deleting its file".into());
+            ) {
+                return Err("pause or cancel the download before deleting its file".into());
+            }
         }
         entries.remove(id);
         Ok(())
+    }
+
+    pub fn reserve_storage_delete(&self, path: &Path) -> Result<Option<String>, String> {
+        let _operation = self
+            .inner
+            .storage_operations
+            .lock()
+            .map_err(|error| format!("storage operation state is unavailable: {error}"))?;
+        let mut reserved_paths = self
+            .inner
+            .reserved_storage_paths
+            .lock()
+            .map_err(|error| format!("storage operation state is unavailable: {error}"))?;
+        if reserved_paths
+            .iter()
+            .any(|reserved| same_managed_path(reserved, path))
+        {
+            return Err("the model file is already being changed in Storage".into());
+        }
+        let mut entries = self
+            .inner
+            .entries
+            .lock()
+            .map_err(|error| format!("download state is unavailable: {error}"))?;
+        let matched = entries.iter_mut().find(|(_, entry)| {
+            same_managed_path(&entry.spec.dest, path)
+                || same_managed_path(&part_path(&entry.spec.dest), path)
+        });
+        let id = if let Some((id, entry)) = matched {
+            if entry.deleting
+                || entry.worker_running
+                || matches!(
+                    entry.progress.state,
+                    DlState::Queued | DlState::Downloading | DlState::Verifying
+                )
+            {
+                return Err("Pause or cancel the download before deleting its file.".into());
+            }
+            entry.deleting = true;
+            Some(id.clone())
+        } else {
+            None
+        };
+        reserved_paths.insert(path.to_path_buf());
+        Ok(id)
+    }
+
+    pub fn finish_storage_delete(
+        &self,
+        path: &Path,
+        id: Option<&str>,
+        deleted: bool,
+    ) -> Result<(), String> {
+        let _operation = self
+            .inner
+            .storage_operations
+            .lock()
+            .map_err(|error| format!("storage operation state is unavailable: {error}"))?;
+        let mut entries = self
+            .inner
+            .entries
+            .lock()
+            .map_err(|error| format!("download state is unavailable: {error}"))?;
+        if let Some(id) = id {
+            if deleted {
+                entries.remove(id);
+            } else if let Some(entry) = entries.get_mut(id) {
+                entry.deleting = false;
+            }
+        }
+        drop(entries);
+        let mut reserved_paths = self
+            .inner
+            .reserved_storage_paths
+            .lock()
+            .map_err(|error| format!("storage operation state is unavailable: {error}"))?;
+        reserved_paths.retain(|reserved| !same_managed_path(reserved, path));
+        Ok(())
+    }
+
+    fn storage_path_reserved(&self, destination: &Path) -> Result<bool, String> {
+        let reserved_paths = self
+            .inner
+            .reserved_storage_paths
+            .lock()
+            .map_err(|error| format!("storage operation state is unavailable: {error}"))?;
+        Ok(reserved_paths.iter().any(|reserved| {
+            same_managed_path(destination, reserved)
+                || same_managed_path(&part_path(destination), reserved)
+        }))
+    }
+
+    fn invalidate_done(&self, spec: &DownloadSpec) -> Result<(), String> {
+        let mut entries = self
+            .inner
+            .entries
+            .lock()
+            .map_err(|error| format!("download state is unavailable: {error}"))?;
+        let should_remove = entries.get(&spec.id).is_some_and(|entry| {
+            entry.progress.state == DlState::Done && same_path(&entry.spec.dest, &spec.dest)
+        });
+        if should_remove {
+            entries.remove(&spec.id);
+        }
+        Ok(())
+    }
+
+    fn has_verified_done(
+        &self,
+        spec: &DownloadSpec,
+        file: &FileFingerprint,
+    ) -> Result<bool, String> {
+        let entries = self
+            .inner
+            .entries
+            .lock()
+            .map_err(|error| format!("download state is unavailable: {error}"))?;
+        Ok(entries.get(&spec.id).is_some_and(|entry| {
+            entry.progress.state == DlState::Done
+                && entry.spec.size == spec.size
+                && entry.spec.sha256.eq_ignore_ascii_case(&spec.sha256)
+                && same_path(&entry.spec.dest, &spec.dest)
+                && file.has_stable_identity()
+                && entry.verified_file.as_ref() == Some(file)
+        }))
     }
 
     fn get_spec(&self, id: &str) -> Result<Option<DownloadSpec>, String> {
@@ -566,7 +811,9 @@ impl DownloadManager {
                 };
                 entry.progress.state = DlState::Failed(message.to_string());
                 entry.worker_running = false;
+                entry.queued = false;
                 entry.stop = None;
+                entry.verified_file = None;
                 (
                     Some(entry.progress.clone()),
                     Some(Arc::clone(&entry.worker_finished)),
@@ -578,7 +825,7 @@ impl DownloadManager {
             }
         };
         if let Some(worker_finished) = worker_finished {
-            worker_finished.notify_one();
+            worker_finished.notify_waiters();
         }
         if let Some(progress) = progress {
             self.publish(progress);
@@ -622,6 +869,7 @@ async fn run_worker(
             let Some(entry) = entries.get_mut(&id) else {
                 continue;
             };
+            entry.queued = false;
             if entry.progress.state != DlState::Queued {
                 continue;
             }
@@ -667,7 +915,12 @@ async fn run_worker(
             },
             Err(error) => (DlState::Failed(error.to_string()), false),
         };
-        if delete_partial && let Err(error) = remove_partial(&part_path(&spec.dest)).await {
+        let delete_result = if delete_partial {
+            remove_partial(&part_path(&spec.dest)).await
+        } else {
+            Ok(())
+        };
+        if let Err(error) = delete_result {
             manager.set_failed(&id, &error);
             continue;
         }
@@ -676,6 +929,10 @@ async fn run_worker(
                 Some(entry) => {
                     entry.progress.state = state;
                     entry.worker_running = false;
+                    entry.queued = false;
+                    if entry.progress.state == DlState::Done {
+                        entry.verified_file = None;
+                    }
                     if entry.progress.state == DlState::Paused
                         && (offline_error || matches!(stop, Some(StopAction::Offline)))
                     {
@@ -708,15 +965,202 @@ async fn run_worker(
             }
         };
         if let Some(worker_finished) = worker_finished {
-            worker_finished.notify_one();
+            worker_finished.notify_waiters();
         }
         if let Some(progress) = progress {
             manager.publish(progress);
         }
-        if resume_when_online && let Err(error) = manager.resume(&id).await {
-            eprintln!("could not resume download after Offline mode was turned off: {error}");
+        if resume_when_online {
+            let manager = manager.clone();
+            let id = id.clone();
+            tokio::spawn(async move {
+                if let Err(error) = manager.resume(&id).await {
+                    eprintln!(
+                        "could not resume download after Offline mode was turned off: {error}"
+                    );
+                }
+            });
         }
     }
+}
+
+async fn completed_file_fingerprint(
+    spec: &DownloadSpec,
+) -> Result<Option<FileFingerprint>, String> {
+    let Some(initial) = current_file_fingerprint(&spec.dest)? else {
+        return Ok(None);
+    };
+    if initial.size != spec.size {
+        return Ok(None);
+    }
+    let actual = sha256_file(&spec.dest, &CancellationToken::new(), |_| {})
+        .await
+        .map_err(|error| {
+            format!(
+                "could not verify downloaded model {}: {error}",
+                spec.dest.display()
+            )
+        })?;
+    if !actual.eq_ignore_ascii_case(&spec.sha256) {
+        return Ok(None);
+    }
+    let Some(current) = current_file_fingerprint(&spec.dest)? else {
+        return Ok(None);
+    };
+    if current.size != spec.size || current != initial {
+        return Ok(None);
+    }
+    Ok(Some(current))
+}
+
+fn current_file_fingerprint(path: &Path) -> Result<Option<FileFingerprint>, String> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+            file_fingerprint(path, &metadata).map(Some)
+        }
+        Ok(_) => Ok(None),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!(
+            "could not inspect model destination {}: {error}",
+            path.display()
+        )),
+    }
+}
+
+fn inspect_restore_files(specs: Vec<DownloadSpec>) -> Result<Vec<RestoreInspection>, String> {
+    let mut inspections = Vec::new();
+    for spec in specs {
+        if !safe_existing_parent(&spec.dest)? {
+            continue;
+        }
+        let complete_file = match std::fs::symlink_metadata(&spec.dest) {
+            Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+                Some(file_fingerprint(&spec.dest, &metadata)?)
+            }
+            Ok(_) => None,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => {
+                return Err(format!(
+                    "could not inspect downloaded model {}: {error}",
+                    spec.dest.display()
+                ));
+            }
+        };
+        let partial = part_path(&spec.dest);
+        let partial_size = match std::fs::symlink_metadata(&partial) {
+            Ok(metadata)
+                if metadata.is_file()
+                    && !metadata.file_type().is_symlink()
+                    && metadata.len() > 0
+                    && metadata.len() <= spec.size =>
+            {
+                Some(metadata.len())
+            }
+            Ok(_) => None,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => {
+                return Err(format!(
+                    "could not inspect partial model download {}: {error}",
+                    partial.display()
+                ));
+            }
+        };
+        inspections.push(RestoreInspection {
+            spec,
+            complete_file,
+            partial_size,
+        });
+    }
+    Ok(inspections)
+}
+
+fn file_fingerprint(path: &Path, metadata: &std::fs::Metadata) -> Result<FileFingerprint, String> {
+    #[cfg(unix)]
+    use std::os::unix::fs::MetadataExt;
+    #[cfg(windows)]
+    use std::os::windows::io::AsRawHandle;
+
+    #[cfg(windows)]
+    let (volume_serial_number, file_index) = {
+        use windows_sys::Win32::Storage::FileSystem::{
+            BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+        };
+
+        let file = std::fs::File::open(path).map_err(|error| {
+            format!(
+                "could not open model destination {}: {error}",
+                path.display()
+            )
+        })?;
+        let mut information = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::zeroed();
+        let succeeded =
+            unsafe { GetFileInformationByHandle(file.as_raw_handle(), information.as_mut_ptr()) };
+        if succeeded == 0 {
+            return Err(format!(
+                "could not identify model destination {}: {}",
+                path.display(),
+                std::io::Error::last_os_error()
+            ));
+        }
+        let information = unsafe { information.assume_init() };
+        (
+            Some(information.dwVolumeSerialNumber),
+            Some(
+                (u64::from(information.nFileIndexHigh) << 32)
+                    | u64::from(information.nFileIndexLow),
+            ),
+        )
+    };
+
+    let fingerprint = FileFingerprint {
+        size: metadata.len(),
+        modified: metadata.modified().ok(),
+        created: metadata.created().ok(),
+        #[cfg(unix)]
+        device: metadata.dev(),
+        #[cfg(unix)]
+        inode: metadata.ino(),
+        #[cfg(windows)]
+        volume_serial_number,
+        #[cfg(windows)]
+        file_index,
+    };
+    Ok(fingerprint)
+}
+
+impl FileFingerprint {
+    fn has_stable_identity(&self) -> bool {
+        #[cfg(unix)]
+        {
+            let _ = (self.device, self.inode);
+            true
+        }
+        #[cfg(windows)]
+        {
+            self.volume_serial_number.is_some() && self.file_index.is_some()
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            self.modified.is_some() || self.created.is_some()
+        }
+    }
+}
+
+fn same_path(left: &Path, right: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        left.to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
+    }
+    #[cfg(not(windows))]
+    {
+        left == right
+    }
+}
+
+fn same_managed_path(expected: &Path, selected: &Path) -> bool {
+    same_path(expected, selected)
+        || std::fs::canonicalize(expected).is_ok_and(|canonical| same_path(&canonical, selected))
 }
 
 fn safe_existing_parent(destination: &Path) -> Result<bool, String> {
@@ -824,10 +1268,9 @@ mod tests {
     async fn wait_for(manager: &DownloadManager, id: &str, expected: DlState) -> Progress {
         timeout(Duration::from_secs(2), async {
             loop {
-                if let Some(progress) = manager.get(id).expect("manager state")
-                    && progress.state == expected
-                {
-                    return progress;
+                match manager.get(id).expect("manager state") {
+                    Some(progress) if progress.state == expected => return progress,
+                    _ => {}
                 }
                 sleep(Duration::from_millis(5)).await;
             }
@@ -968,13 +1411,279 @@ mod tests {
             .expect("existing model");
         let runs = Arc::new(AtomicUsize::new(0));
         let manager = manager(waiting_runner(Arc::clone(&runs), Arc::new(Notify::new())));
+        let mut existing_spec = spec(dest.clone(), 5);
+        existing_spec.sha256 = sha256_file(&dest, &CancellationToken::new(), |_| {})
+            .await
+            .expect("checksum");
 
         let progress = manager
-            .start(spec(dest, 5))
+            .start(existing_spec)
             .await
             .expect("existing model is recognized");
 
         assert_eq!(progress.state, DlState::Done);
         assert_eq!(runs.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn restore_and_start_reject_existing_file_with_wrong_checksum() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let family = directory.path().join("family");
+        tokio::fs::create_dir(&family)
+            .await
+            .expect("model family folder");
+        let dest = family.join("model.gguf");
+        tokio::fs::write(&dest, b"12345")
+            .await
+            .expect("existing model");
+        let invalid = spec(dest, 5);
+        let manager = manager(waiting_runner(
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(Notify::new()),
+        ));
+
+        manager
+            .restore(vec![invalid.clone()])
+            .await
+            .expect("restore should inspect the model");
+
+        assert!(manager.get("model-q4").expect("manager state").is_none());
+        let error = manager
+            .start(invalid)
+            .await
+            .expect_err("wrong checksum should not be accepted");
+        assert!(error.contains("catalog checksum"));
+    }
+
+    #[tokio::test]
+    async fn restore_marks_file_done_only_after_checksum_validation() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let family = directory.path().join("family");
+        tokio::fs::create_dir(&family)
+            .await
+            .expect("model family folder");
+        let dest = family.join("model.gguf");
+        tokio::fs::write(&dest, b"valid model")
+            .await
+            .expect("existing model");
+        let mut valid = spec(dest.clone(), 11);
+        valid.sha256 = sha256_file(&dest, &CancellationToken::new(), |_| {})
+            .await
+            .expect("checksum");
+        let manager = manager(waiting_runner(
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(Notify::new()),
+        ));
+
+        manager
+            .restore(vec![valid])
+            .await
+            .expect("restore should inspect the model");
+
+        assert_eq!(
+            manager
+                .get("model-q4")
+                .expect("manager state")
+                .expect("restored model")
+                .state,
+            DlState::Done
+        );
+    }
+
+    #[tokio::test]
+    async fn starting_again_after_a_done_file_disappears_queues_a_replacement() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let family = directory.path().join("family");
+        tokio::fs::create_dir(&family)
+            .await
+            .expect("model family folder");
+        let dest = family.join("model.gguf");
+        tokio::fs::write(&dest, b"valid model")
+            .await
+            .expect("existing model");
+        let mut valid = spec(dest.clone(), 11);
+        valid.sha256 = sha256_file(&dest, &CancellationToken::new(), |_| {})
+            .await
+            .expect("checksum");
+        let manager = manager(waiting_runner(
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(Notify::new()),
+        ));
+        manager
+            .restore(vec![valid.clone()])
+            .await
+            .expect("restore existing model");
+        tokio::fs::remove_file(&dest)
+            .await
+            .expect("remove existing model");
+
+        let replacement = manager
+            .start(valid)
+            .await
+            .expect("replacement should be queued");
+
+        assert_eq!(replacement.state, DlState::Queued);
+    }
+
+    #[tokio::test]
+    async fn storage_delete_reservation_blocks_resume_until_file_is_removed() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let dest = directory.path().join("model.gguf");
+        let started = Arc::new(Notify::new());
+        let manager = manager(waiting_runner(
+            Arc::new(AtomicUsize::new(0)),
+            Arc::clone(&started),
+        ));
+        let spec = spec(dest.clone(), 10);
+
+        manager.start(spec.clone()).await.expect("start download");
+        started.notified().await;
+        manager.pause("model-q4").await.expect("pause download");
+        wait_for(&manager, "model-q4", DlState::Paused).await;
+
+        let reservation = manager
+            .reserve_storage_delete(&dest)
+            .expect("reserve storage deletion");
+        assert_eq!(reservation.as_deref(), Some("model-q4"));
+        assert!(manager.resume("model-q4").await.is_err());
+        manager
+            .finish_storage_delete(&dest, reservation.as_deref(), true)
+            .expect("finish storage deletion");
+        assert!(manager.get("model-q4").expect("manager state").is_none());
+        assert!(manager.start(spec).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn storage_delete_reservation_blocks_a_new_start_without_an_entry() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let dest = directory.path().join("model.gguf");
+        let manager = manager(waiting_runner(
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(Notify::new()),
+        ));
+
+        let reservation = manager
+            .reserve_storage_delete(&dest)
+            .expect("reserve storage path");
+        assert!(reservation.is_none());
+        assert!(manager.start(spec(dest.clone(), 10)).await.is_err());
+        manager
+            .finish_storage_delete(&dest, None, false)
+            .expect("release storage path");
+        assert_eq!(
+            manager
+                .start(spec(dest, 10))
+                .await
+                .expect("start after deletion")
+                .state,
+            DlState::Queued
+        );
+    }
+
+    #[tokio::test]
+    async fn concurrent_cancel_waiters_are_all_notified_when_worker_stops() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let started = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let runner: DownloadRunner = {
+            let started = Arc::clone(&started);
+            let release = Arc::clone(&release);
+            Arc::new(move |_, cancellation, _| {
+                let started = Arc::clone(&started);
+                let release = Arc::clone(&release);
+                Box::pin(async move {
+                    started.notify_one();
+                    cancellation.cancelled().await;
+                    release.notified().await;
+                    Err(DlError::Cancelled)
+                })
+            })
+        };
+        let manager = manager(runner);
+        manager
+            .start(spec(directory.path().join("model.gguf"), 10))
+            .await
+            .expect("start download");
+        started.notified().await;
+
+        let first = {
+            let manager = manager.clone();
+            tokio::spawn(async move { manager.cancel("model-q4", true).await })
+        };
+        let second = {
+            let manager = manager.clone();
+            tokio::spawn(async move { manager.cancel("model-q4", true).await })
+        };
+        sleep(Duration::from_millis(25)).await;
+        release.notify_one();
+
+        timeout(Duration::from_secs(2), async {
+            first
+                .await
+                .expect("first cancel task")
+                .expect("first cancel");
+            second
+                .await
+                .expect("second cancel task")
+                .expect("second cancel");
+        })
+        .await
+        .expect("both cancellation waiters should wake");
+    }
+
+    #[tokio::test]
+    async fn offline_auto_resume_does_not_deadlock_when_the_queue_is_full() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let started = Arc::new(Notify::new());
+        let active_runs = Arc::new(AtomicUsize::new(0));
+        let runner: DownloadRunner = {
+            let started = Arc::clone(&started);
+            let active_runs = Arc::clone(&active_runs);
+            Arc::new(move |spec, cancellation, _| {
+                let started = Arc::clone(&started);
+                let active_runs = Arc::clone(&active_runs);
+                Box::pin(async move {
+                    if spec.id == "model-q4" && active_runs.fetch_add(1, Ordering::SeqCst) == 0 {
+                        started.notify_one();
+                        cancellation.cancelled().await;
+                        return Err(DlError::Cancelled);
+                    }
+                    Ok(spec.dest)
+                })
+            })
+        };
+        let manager = manager(runner);
+        manager
+            .start(spec(directory.path().join("active.gguf"), 10))
+            .await
+            .expect("start active download");
+        started.notified().await;
+
+        for index in 0..64 {
+            let mut queued = spec(directory.path().join(format!("queued-{index}.gguf")), 10);
+            queued.id = format!("queued-{index}");
+            manager.start(queued).await.expect("fill worker queue");
+        }
+        for _ in 0..100 {
+            manager
+                .resume("queued-0")
+                .await
+                .expect("queued resume should be idempotent");
+        }
+
+        manager
+            .set_offline(true)
+            .await
+            .expect("enable offline mode");
+        manager
+            .set_offline(false)
+            .await
+            .expect("disable offline mode");
+
+        assert_eq!(
+            wait_for(&manager, "model-q4", DlState::Done).await.state,
+            DlState::Done
+        );
+        assert_eq!(active_runs.load(Ordering::SeqCst), 2);
     }
 }

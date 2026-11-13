@@ -44,7 +44,7 @@ import { DownloadsButton, DownloadsDrawer } from "@/app/downloads/DownloadsDrawe
 import { FirstRunWizard } from "@/app/wizard/FirstRunWizard";
 import { TooltipProvider } from "@/components/primitives/tooltip";
 import { ToastProvider } from "@/components/ui/toast-provider";
-import { DownloadsProvider } from "@/downloads/useDownloads";
+import { DownloadsProvider, useDownloads } from "@/downloads/useDownloads";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openPath: vi.fn(),
@@ -212,7 +212,59 @@ function renderModelsView(profile: HardwareProfile | null) {
   );
 }
 
+function DownloadAttemptHarness() {
+  const downloads = useDownloads();
+  return (
+    <>
+      <button onClick={() => void downloads.cancel("model", true)}>Cancel</button>
+      <button onClick={() => void downloads.resume("model")}>Resume</button>
+      <output>{downloads.byId("model")?.state.kind ?? "missing"}</output>
+    </>
+  );
+}
+
 describe("ModelsView", () => {
+  it("does not let a delayed cancel forget a newer resumed attempt", async () => {
+    const downloading: DownloadProgress = {
+      id: "model",
+      state: { kind: "downloading" },
+      done: 512,
+      total: 1024,
+      bytesPerSec: 0,
+      etaSecs: null,
+    };
+    vi.mocked(listDownloads).mockResolvedValue([downloading]);
+    let emitProgress: ((next: DownloadProgress) => void) | undefined;
+    vi.mocked(listenDownloadProgress).mockImplementation(async (onProgress) => {
+      emitProgress = onProgress;
+      return () => undefined;
+    });
+    let resolveCancel: ((progress: DownloadProgress) => void) | undefined;
+    vi.mocked(cancelDownload).mockImplementation(() => new Promise((resolve) => {
+      resolveCancel = resolve;
+    }));
+    render(<DownloadsProvider><DownloadAttemptHarness /></DownloadsProvider>);
+
+    await waitFor(() => expect(screen.getByText("downloading")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(cancelDownload).toHaveBeenCalledWith("model", true));
+    act(() => {
+      emitProgress?.({ ...downloading, state: { kind: "cancelled" } });
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+    await waitFor(() => expect(screen.getByText("queued")).toBeInTheDocument());
+
+    await act(async () => {
+      resolveCancel?.({
+        ...downloading,
+        state: { kind: "cancelled" },
+        done: 0,
+      });
+    });
+
+    expect(screen.getByText("queued")).toBeInTheDocument();
+  });
+
   it("shows the scan-first empty state when no hardware profile exists", () => {
     renderModelsView(null);
 
@@ -822,6 +874,36 @@ describe("SettingsView and FirstRunWizard", () => {
     expect(getStorageInfo).toHaveBeenCalledTimes(2);
   });
 
+  it("refreshes storage inventory after a model download completes", async () => {
+    vi.mocked(getStorageInfo)
+      .mockResolvedValueOnce({
+        modelFolder: "C:\\models",
+        modelFiles: [],
+        incompleteDownloads: [],
+        catalogCacheBytes: 0,
+        totalBytes: 0,
+      })
+      .mockResolvedValueOnce({
+        modelFolder: "C:\\models",
+        modelFiles: [{
+          path: "C:\\models\\family\\small.gguf",
+          name: "small.gguf",
+          sizeBytes: 1024,
+          modelId: "small-model",
+        }],
+        incompleteDownloads: [],
+        catalogCacheBytes: 0,
+        totalBytes: 1024,
+      });
+    render(<ToastProvider><SettingsView /></ToastProvider>);
+
+    expect(await screen.findByText(en.views.settings.storage.emptyModels)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: en.views.settings.storage.refresh }));
+
+    expect(await screen.findByText("C:\\models\\family\\small.gguf")).toBeInTheDocument();
+    expect(getStorageInfo).toHaveBeenCalledTimes(2);
+  });
+
   it("ignores an outdated storage refresh after changing folders", async () => {
     const originalInfo: StorageInfo = {
       modelFolder: "C:\\models",
@@ -873,26 +955,44 @@ describe("SettingsView and FirstRunWizard", () => {
   it("confirms storage deletion and removes the download from the shared list", async () => {
     vi.mocked(getStorageInfo).mockResolvedValue({
       modelFolder: "C:\\models",
-      modelFiles: [{
-        path: "C:\\models\\small.gguf",
-        name: "small.gguf",
-        sizeBytes: 1024,
-        modelId: "small-model",
-      }],
+      modelFiles: [
+        {
+          path: "C:\\models\\family-a\\small.gguf",
+          name: "small.gguf",
+          sizeBytes: 1024,
+          modelId: "small-model-a",
+        },
+        {
+          path: "C:\\models\\family-b\\small.gguf",
+          name: "small.gguf",
+          sizeBytes: 2048,
+          modelId: "small-model-b",
+        },
+      ],
       incompleteDownloads: [],
       catalogCacheBytes: 0,
-      totalBytes: 1024,
+      totalBytes: 3072,
     });
     const onDownloadDeleted = vi.fn();
     render(<ToastProvider><SettingsView onDownloadDeleted={onDownloadDeleted} /></ToastProvider>);
 
-    fireEvent.click(await screen.findByRole("button", { name: en.views.settings.storage.delete }));
-    expect(await screen.findByText(en.views.settings.storage.deleteDescription("small.gguf"))).toBeInTheDocument();
+    const firstPath = await screen.findByText("C:\\models\\family-a\\small.gguf");
+    expect(screen.getByText("C:\\models\\family-b\\small.gguf")).toBeInTheDocument();
+    const firstFileRow = firstPath.closest("li");
+    if (!firstFileRow) throw new Error("Expected the first Storage file row.");
+    fireEvent.click(within(firstFileRow).getByRole("button", { name: en.views.settings.storage.delete }));
+    expect(await screen.findByText(en.views.settings.storage.deleteDescription(
+      "small.gguf",
+      "C:\\models\\family-a\\small.gguf",
+    ))).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: en.views.settings.storage.confirmDelete }));
 
     await waitFor(() => {
-      expect(deleteStorageFile).toHaveBeenCalledWith("C:\\models\\small.gguf", "small-model");
-      expect(onDownloadDeleted).toHaveBeenCalledWith("small-model");
+      expect(deleteStorageFile).toHaveBeenCalledWith(
+        "C:\\models\\family-a\\small.gguf",
+        "small-model-a",
+      );
+      expect(onDownloadDeleted).toHaveBeenCalledWith("small-model-a");
     });
   });
 
