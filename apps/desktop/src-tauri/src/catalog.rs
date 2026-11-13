@@ -71,6 +71,16 @@ struct CatalogQuant {
     url: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModelDownloadInfo {
+    pub id: String,
+    pub family: String,
+    pub file: String,
+    pub size_bytes: u64,
+    pub sha256: String,
+    pub url: String,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 struct AppSettings {
     #[serde(default)]
@@ -79,6 +89,10 @@ struct AppSettings {
     offline_mode: bool,
     #[serde(default)]
     subscribed_families: Option<Vec<String>>,
+    #[serde(default)]
+    model_folder: Option<PathBuf>,
+    #[serde(default)]
+    managed_model_folders: Vec<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -407,6 +421,30 @@ pub fn model_specs(catalog: &Catalog) -> Vec<ModelSpec> {
             })
         })
         .collect()
+}
+
+pub fn model_download_infos(catalog: &Catalog) -> Vec<ModelDownloadInfo> {
+    catalog
+        .models
+        .iter()
+        .filter(|model| model.params_b.is_some())
+        .flat_map(|model| {
+            model.quants.iter().map(move |quant| ModelDownloadInfo {
+                id: format!("{}-{}", model.id, quant.name.to_ascii_lowercase()),
+                family: model.family.clone(),
+                file: quant.file.clone(),
+                size_bytes: quant.size_bytes,
+                sha256: quant.sha256.clone(),
+                url: quant.url.clone(),
+            })
+        })
+        .collect()
+}
+
+pub fn model_download_info(catalog: &Catalog, model_id: &str) -> Option<ModelDownloadInfo> {
+    model_download_infos(catalog)
+        .into_iter()
+        .find(|model| model.id == model_id)
 }
 
 pub fn load_catalog(data_dir: &Path, bundled_json: &str) -> Result<CatalogLoad, String> {
@@ -825,6 +863,64 @@ fn load_settings(data_dir: &Path) -> Result<AppSettings, String> {
     }
 }
 
+pub fn model_folder(data_dir: &Path, default_folder: &Path) -> Result<PathBuf, String> {
+    let settings = load_settings(data_dir)?;
+    let folder = settings
+        .model_folder
+        .unwrap_or_else(|| default_folder.to_path_buf());
+    if !folder.is_absolute() {
+        return Err("the configured model folder must be an absolute path".into());
+    }
+    Ok(folder)
+}
+
+pub fn managed_model_folders(
+    data_dir: &Path,
+    default_folder: &Path,
+) -> Result<Vec<PathBuf>, String> {
+    let settings = load_settings(data_dir)?;
+    let mut folders = Vec::with_capacity(settings.managed_model_folders.len() + 2);
+    folders.push(
+        settings
+            .model_folder
+            .unwrap_or_else(|| default_folder.to_path_buf()),
+    );
+    folders.extend(settings.managed_model_folders);
+    folders.push(default_folder.to_path_buf());
+    if folders.iter().any(|folder| !folder.is_absolute()) {
+        return Err("a configured model folder must be an absolute path".into());
+    }
+    let mut unique = Vec::with_capacity(folders.len());
+    for folder in folders {
+        if !unique.contains(&folder) {
+            unique.push(folder);
+        }
+    }
+    Ok(unique)
+}
+
+pub fn set_model_folder(
+    data_dir: &Path,
+    default_folder: &Path,
+    folder: &Path,
+) -> Result<(), String> {
+    if !folder.is_absolute() || !default_folder.is_absolute() {
+        return Err("model folders must be absolute paths".into());
+    }
+    let mut settings = load_settings(data_dir)?;
+    let previous = settings
+        .model_folder
+        .take()
+        .unwrap_or_else(|| default_folder.to_path_buf());
+    for managed in [previous, default_folder.to_path_buf(), folder.to_path_buf()] {
+        if !settings.managed_model_folders.contains(&managed) {
+            settings.managed_model_folders.push(managed);
+        }
+    }
+    settings.model_folder = Some(folder.to_path_buf());
+    save_settings(data_dir, &settings)
+}
+
 fn save_settings(data_dir: &Path, settings: &AppSettings) -> Result<(), String> {
     let bytes = serde_json::to_vec_pretty(settings)
         .map_err(|error| format!("could not encode application settings: {error}"))?;
@@ -900,6 +996,40 @@ mod tests {
         assert!(!specs[2].license.osi_open);
         assert_eq!(specs[3].tags, ["chat", "coding"]);
         assert_eq!(specs[6].file_size_bytes, 47_415_715_488);
+    }
+
+    #[test]
+    fn model_download_info_includes_signed_catalog_metadata() {
+        let catalog = validate_catalog_json(BUNDLED.as_bytes()).expect("valid bundled catalog");
+        let model = model_download_info(&catalog, "qwen2.5-0.5b-instruct-q4_k_m")
+            .expect("catalog download metadata");
+
+        assert_eq!(model.family, "qwen2.5");
+        assert_eq!(model.file, "qwen2.5-0.5b-instruct-q4_k_m.gguf");
+        assert!(model.size_bytes > 0);
+        assert_eq!(model.sha256.len(), 64);
+        assert!(model.url.starts_with("https://huggingface.co/"));
+    }
+
+    #[test]
+    fn model_folder_changes_keep_previous_roots_managed() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let data_dir = directory.path().join("data");
+        let default_folder = data_dir.join("models");
+        let first = directory.path().join("first");
+        let second = directory.path().join("second");
+
+        set_model_folder(&data_dir, &default_folder, &first).expect("first model folder");
+        set_model_folder(&data_dir, &default_folder, &second).expect("second model folder");
+
+        assert_eq!(
+            model_folder(&data_dir, &default_folder).expect("current model folder"),
+            second
+        );
+        assert_eq!(
+            managed_model_folders(&data_dir, &default_folder).expect("managed folders"),
+            vec![second, default_folder, first]
+        );
     }
 
     #[test]

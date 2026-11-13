@@ -7,6 +7,7 @@ import { en } from "@/i18n/en";
 import { cn } from "@/lib/utils";
 import { EstimateBadge } from "../EstimateBadge";
 import { formatBytes } from "../scan/format";
+import { DownloadActions } from "@/downloads/DownloadActions";
 import { FitBadge } from "./FitBadge";
 import { availableFor } from "./fit";
 
@@ -32,16 +33,9 @@ export function ModelCard({
 
   return (
     <Card
-      role="button"
-      tabIndex={0}
-      aria-label={t.openDetails(model.name)}
+      role="group"
+      aria-label={model.name}
       onClick={onOpen}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onOpen();
-        }
-      }}
       className={cn(
         "flex cursor-pointer flex-col gap-4 p-5 shadow-none transition-colors hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         rec.badges.includes("best_fit") && "border-primary",
@@ -66,7 +60,17 @@ export function ModelCard({
       </div>
 
       <div className="flex flex-col gap-0.5">
-        <h3 className="font-display text-lg font-semibold leading-tight text-card-foreground">{model.name}</h3>
+        <button
+          type="button"
+          aria-label={t.openDetails(model.name)}
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpen();
+          }}
+          className="w-fit text-left font-display text-lg font-semibold leading-tight text-card-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {model.name}
+        </button>
         <p className="text-xs text-muted-foreground">
           {t.params(model.params_b)} · {model.quant}
         </p>
@@ -94,6 +98,18 @@ export function ModelCard({
             style={{ width: `${memRatio * 100}%` }}
           />
         </div>
+      </div>
+
+      <div onClick={(event) => event.stopPropagation()}>
+        {!wontFit && (
+          <DownloadActions
+            modelId={model.id}
+            sizeBytes={model.file_size_bytes}
+            profile={profile}
+            context={estimate.context}
+            compact
+          />
+        )}
       </div>
 
       <div className="mt-auto flex items-center justify-between border-t border-border pt-3">

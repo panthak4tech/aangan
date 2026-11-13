@@ -2,33 +2,49 @@ import {
   Database,
   FolderOpen,
   Globe,
+  HardDrive,
   Info,
   Languages,
   Monitor,
+  RefreshCw,
   ShieldCheck,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { AboutDialog } from "@/app/notices/NoticesDialog";
 import {
   APP_INFO,
+  chooseModelFolder,
+  deleteStorageFile,
   getAppPaths,
   getCatalogInfo,
+  getStorageInfo,
   getNetworkState,
   listenNetworkState,
   openNetworkDocs as openNetworkDocsCommand,
+  openModelFileFolder,
+  openModelFolder,
   resetCatalog,
   setCatalogRefreshConsent,
   setOfflineMode,
+  setModelFolder,
   setSubscribedFamilies,
 } from "@/api/api";
-import type { AppPaths, CatalogInfo, NetworkState } from "@/api/types";
+import type { AppPaths, CatalogInfo, NetworkState, StorageFile, StorageInfo } from "@/api/types";
 import { SpecRow } from "@/components/aangan/SystemSpecCard";
 import { Badge } from "@/components/primitives/badge";
 import { Button } from "@/components/primitives/button";
 import { Card } from "@/components/primitives/card";
 import { Checkbox } from "@/components/primitives/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/primitives/dialog";
 import { RadioGroup, RadioGroupItem } from "@/components/primitives/radio-group";
 import { Skeleton } from "@/components/primitives/skeleton";
 import { useToast } from "@/components/ui/toast-provider";
@@ -37,6 +53,7 @@ import { en } from "@/i18n/en";
 import { useTheme } from "@/theme/useTheme";
 import { isTheme } from "@/theme/theme";
 import { NetworkActivityPage } from "./NetworkActivityPage";
+import { formatTransferSize } from "@/downloads/format";
 
 function SettingsSection({
   icon: Icon,
@@ -63,9 +80,11 @@ function SettingsSection({
 export function SettingsView({
   openNetworkActivity = false,
   onCloseNetworkActivity,
+  onDownloadDeleted,
 }: {
   openNetworkActivity?: boolean;
   onCloseNetworkActivity?: () => void;
+  onDownloadDeleted?: (id: string) => void;
 } = {}) {
   const t = en.views.settings;
   const [lang, setLang] = useState<string>(APP_INFO.languages[0].code);
@@ -85,7 +104,29 @@ export function SettingsView({
   const [networkError, setNetworkError] = useState<string | null>(null);
   const [networkSaving, setNetworkSaving] = useState(false);
   const [localNetworkActivityOpen, setLocalNetworkActivityOpen] = useState(false);
+  const [storageInfo, setStorageInfo] = useState<StorageInfo | null>(null);
+  const [storageLoading, setStorageLoading] = useState(true);
+  const [storageError, setStorageError] = useState<string | null>(null);
+  const [storageSaving, setStorageSaving] = useState(false);
+  const [deletingFile, setDeletingFile] = useState<StorageFile | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const storageInfoRequest = useRef(0);
   const toast = useToast();
+
+  const refreshStorageInfo = useCallback(async () => {
+    const request = ++storageInfoRequest.current;
+    setStorageLoading(true);
+    setStorageError(null);
+    try {
+      const info = await getStorageInfo();
+      if (request === storageInfoRequest.current) setStorageInfo(info);
+    } catch (error) {
+      if (request === storageInfoRequest.current) setStorageError(errorMessage(error));
+    } finally {
+      if (request === storageInfoRequest.current) setStorageLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -110,6 +151,8 @@ export function SettingsView({
       .finally(() => {
         if (mounted) setCatalogLoading(false);
       });
+
+    void refreshStorageInfo();
 
     let receivedNetworkEvent = false;
     let unlisten: (() => void) | undefined;
@@ -141,9 +184,10 @@ export function SettingsView({
 
     return () => {
       mounted = false;
+      storageInfoRequest.current += 1;
       unlisten?.();
     };
-  }, []);
+  }, [refreshStorageInfo]);
 
   const updateOfflineMode = async (offlineMode: boolean) => {
     setNetworkSaving(true);
@@ -203,6 +247,60 @@ export function SettingsView({
       await openPath(appPaths.data_dir);
     } catch (error) {
       toast(t.data.openFailed(errorMessage(error)), { variant: "destructive" });
+    }
+  };
+
+  const chooseStorageFolder = async () => {
+    setStorageSaving(true);
+    setStorageError(null);
+    let request = storageInfoRequest.current;
+    try {
+      const selected = await chooseModelFolder();
+      if (!selected) return;
+      request = ++storageInfoRequest.current;
+      setStorageLoading(false);
+      await setModelFolder(selected);
+      await refreshStorageInfo();
+    } catch (error) {
+      if (request === storageInfoRequest.current) {
+        setStorageError(t.storage.saveFailed(errorMessage(error)));
+      }
+    } finally {
+      setStorageSaving(false);
+    }
+  };
+
+  const openStorageFolder = async () => {
+    setStorageError(null);
+    try {
+      await openModelFolder();
+    } catch (error) {
+      setStorageError(t.storage.openFailed(errorMessage(error)));
+    }
+  };
+
+  const revealStorageFile = async (file: StorageFile) => {
+    setStorageError(null);
+    try {
+      await openModelFileFolder(file.path);
+    } catch (error) {
+      setStorageError(t.storage.showInFolderFailed(errorMessage(error)));
+    }
+  };
+
+  const confirmDeleteStorageFile = async () => {
+    if (!deletingFile) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await deleteStorageFile(deletingFile.path, deletingFile.modelId);
+      if (deletingFile.modelId) onDownloadDeleted?.(deletingFile.modelId);
+      setDeletingFile(null);
+      await refreshStorageInfo();
+    } catch (error) {
+      setDeleteError(t.storage.deleteFailed(errorMessage(error)));
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -326,6 +424,90 @@ export function SettingsView({
         <p className="text-xs text-muted-foreground">{t.data.hint}</p>
       </SettingsSection>
 
+      <SettingsSection icon={HardDrive} title={t.storage.title}>
+        <p className="text-sm text-muted-foreground">{t.storage.body}</p>
+        {storageLoading && !storageInfo ? (
+          <Skeleton role="status" aria-label={t.storage.loading} className="h-8 w-full" />
+        ) : storageInfo ? (
+          <>
+            <p className="text-sm text-muted-foreground">{t.storage.folder}</p>
+            <code className="select-all break-all rounded-lg bg-muted px-3 py-2 font-mono text-xs text-foreground">
+              {storageInfo.modelFolder}
+            </code>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                onClick={() => void refreshStorageInfo()}
+                disabled={storageLoading}
+              >
+                <RefreshCw />
+                {storageLoading ? t.storage.refreshing : t.storage.refresh}
+              </Button>
+              <Button variant="outline" onClick={() => void chooseStorageFolder()} disabled={storageSaving}>
+                {t.storage.chooseFolder}
+              </Button>
+              <Button variant="outline" onClick={() => void openStorageFolder()}>
+                <FolderOpen />
+                {t.storage.openFolder}
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">{t.storage.total(formatTransferSize(storageInfo.totalBytes))}</p>
+            <p className="text-xs text-muted-foreground">
+              {t.storage.catalogCache(formatTransferSize(storageInfo.catalogCacheBytes))}
+            </p>
+            <StorageFileList
+              title={t.storage.models}
+              empty={t.storage.emptyModels}
+              files={storageInfo.modelFiles}
+              onReveal={(file) => void revealStorageFile(file)}
+              onDelete={(file) => {
+                setDeleteError(null);
+                setDeletingFile(file);
+              }}
+              deleteLabel={t.storage.delete}
+              revealLabel={t.storage.showInFolder}
+            />
+            <StorageFileList
+              title={t.storage.partials}
+              empty={t.storage.emptyPartials}
+              files={storageInfo.incompleteDownloads}
+              onReveal={(file) => void revealStorageFile(file)}
+              onDelete={(file) => {
+                setDeleteError(null);
+                setDeletingFile(file);
+              }}
+              deleteLabel={t.storage.delete}
+              revealLabel={t.storage.showInFolder}
+            />
+          </>
+        ) : (
+          <div className="flex flex-col items-start gap-2">
+            <p role="alert" className="text-sm text-destructive">
+              {t.storage.loadFailed(storageError ?? "unknown error")}
+            </p>
+            <Button
+              variant="outline"
+              onClick={() => void refreshStorageInfo()}
+              disabled={storageLoading}
+            >
+              {t.storage.retry}
+            </Button>
+          </div>
+        )}
+        {storageError && storageInfo && (
+          <div className="flex flex-col items-start gap-2">
+            <p role="alert" className="text-sm text-destructive">{storageError}</p>
+            <Button
+              variant="outline"
+              onClick={() => void refreshStorageInfo()}
+              disabled={storageLoading || storageSaving}
+            >
+              {t.storage.retry}
+            </Button>
+          </div>
+        )}
+      </SettingsSection>
+
       <SettingsSection icon={Database} title={t.catalog.title}>
         <p className="text-sm text-muted-foreground">{t.catalog.body}</p>
         <p className="text-sm text-muted-foreground">{t.catalog.source}</p>
@@ -427,6 +609,89 @@ export function SettingsView({
         </button>
       </SettingsSection>
       <AboutDialog open={noticesOpen} onOpenChange={setNoticesOpen} />
+      <Dialog
+        open={!!deletingFile}
+        onOpenChange={(open) => {
+          if (!open && !deleting) setDeletingFile(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t.storage.deleteTitle}</DialogTitle>
+            <DialogDescription>
+              {t.storage.deleteDescription(deletingFile?.name ?? "", deletingFile?.path ?? "")}
+            </DialogDescription>
+          </DialogHeader>
+          {deleteError && <p role="alert" className="text-sm text-destructive">{deleteError}</p>}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeletingFile(null)}
+              disabled={deleting}
+            >
+              {t.storage.cancelDelete}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => void confirmDeleteStorageFile()}
+              disabled={deleting}
+            >
+              {t.storage.confirmDelete}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </section>
+  );
+}
+
+function StorageFileList({
+  title,
+  empty,
+  files,
+  onReveal,
+  onDelete,
+  deleteLabel,
+  revealLabel,
+}: {
+  title: string;
+  empty: string;
+  files: StorageFile[];
+  onReveal: (file: StorageFile) => void;
+  onDelete: (file: StorageFile) => void;
+  deleteLabel: string;
+  revealLabel: string;
+}) {
+  return (
+    <section className="flex flex-col gap-2" aria-label={title}>
+      <h3 className="text-sm font-medium text-foreground">{title}</h3>
+      {files.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{empty}</p>
+      ) : (
+        <ul className="flex flex-col gap-2">
+          {files.map((file) => (
+            <li
+              key={file.path}
+              className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border p-3"
+            >
+              <div className="min-w-0">
+                <p className="break-all text-sm text-foreground">{file.name}</p>
+                <p className="break-all text-xs text-muted-foreground">{file.path}</p>
+                <p className="text-xs text-muted-foreground">{formatTransferSize(file.sizeBytes)}</p>
+              </div>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => onReveal(file)}>
+                  <FolderOpen />
+                  {revealLabel}
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => onDelete(file)}>
+                  {deleteLabel}
+                </Button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   );
 }

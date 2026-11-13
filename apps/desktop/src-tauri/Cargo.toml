@@ -30,8 +30,13 @@ fitcalc.workspace = true
 hwprobe.workspace = true
 tempfile = "3"
 minisign-verify = "0.3"
-tokio = { version = "1", features = ["sync"] }
+fs4 = { version = "0.13", features = ["sync"] }
+tokio = { version = "1", features = ["rt", "sync"] }
+tokio-util = { version = "0.7", features = ["rt"] }
 url = "2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
 aangan-net = { path = "../../../crates/aangan-net", features = ["test-util"] }

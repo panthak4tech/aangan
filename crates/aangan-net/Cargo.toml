@@ -11,11 +11,20 @@ test-util = []
 
 [dependencies]
 bytes = "1"
+fs4 = { version = "0.13", features = ["sync"] }
+hex = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
-tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
+sha2 = "0.10"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "rt", "sync", "time"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 url = "2"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
+axum = "0.8"
+futures-util = "0.3"
+tempfile = "3"
 tokio = { version = "1", features = ["full"] }

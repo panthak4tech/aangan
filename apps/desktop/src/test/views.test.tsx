@@ -1,35 +1,50 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import packageMetadata from "../../package.json";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  cancelDownload,
   copyHardwareReport,
   clearNetworkActivity,
+  chooseModelFolder,
+  deleteStorageFile,
   getAppPaths,
   getCatalogInfo,
+  getModelFolder,
   getNetworkActivity,
   getNetworkState,
+  getStorageInfo,
   listenNetworkState,
+  listenDownloadProgress,
+  listDownloads,
+  openModelFileFolder,
+  openModelFolder,
+  pauseDownload,
   recommendModels,
   refreshCatalog,
   resetCatalog,
   openNetworkDocs,
   saveHardwareReport,
   scanHardware,
+  resumeDownload,
   setCatalogRefreshConsent,
   setOfflineMode,
+  setModelFolder,
   setSubscribedFamilies,
+  startDownload,
 } from "@/api/api";
-import type { HardwareProfile } from "@/api/types";
+import type { DownloadProgress, HardwareProfile, StorageInfo } from "@/api/types";
 import { MODELS, PRESETS } from "@/api/presets";
 import { rankModels } from "@/api/estimate";
 import { en } from "@/i18n/en";
 import { ModelsView } from "@/app/views/ModelsView";
 import { ScanView } from "@/app/views/ScanView";
 import { SettingsView } from "@/app/views/SettingsView";
+import { DownloadsButton, DownloadsDrawer } from "@/app/downloads/DownloadsDrawer";
 import { FirstRunWizard } from "@/app/wizard/FirstRunWizard";
 import { TooltipProvider } from "@/components/primitives/tooltip";
 import { ToastProvider } from "@/components/ui/toast-provider";
+import { DownloadsProvider, useDownloads } from "@/downloads/useDownloads";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openPath: vi.fn(),
@@ -40,13 +55,24 @@ import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 vi.mock("@/api/api", async () => {
   const { default: metadata } = await import("../../package.json");
   return {
+    cancelDownload: vi.fn(),
     copyHardwareReport: vi.fn(),
     clearNetworkActivity: vi.fn(),
+    chooseModelFolder: vi.fn(),
+    deleteStorageFile: vi.fn(),
     getAppPaths: vi.fn(),
     getCatalogInfo: vi.fn(),
+    getModelFolder: vi.fn(),
     getNetworkActivity: vi.fn(),
     getNetworkState: vi.fn(),
+    getStorageInfo: vi.fn(),
     listenNetworkState: vi.fn(),
+    listenDownloadProgress: vi.fn(),
+    listDownloads: vi.fn(),
+    openModelFileFolder: vi.fn(),
+    openModelFolder: vi.fn(),
+    pauseDownload: vi.fn(),
+    resumeDownload: vi.fn(),
     openNetworkDocs: vi.fn(),
     recommendModels: vi.fn(),
     refreshCatalog: vi.fn(),
@@ -55,7 +81,9 @@ vi.mock("@/api/api", async () => {
     scanHardware: vi.fn(),
     setCatalogRefreshConsent: vi.fn(),
     setOfflineMode: vi.fn(),
+    setModelFolder: vi.fn(),
     setSubscribedFamilies: vi.fn(),
+    startDownload: vi.fn(),
     APP_INFO: {
       version: metadata.version,
       license: "MIT",
@@ -78,6 +106,7 @@ beforeEach(() => {
     warning: null,
     signature_verified: false,
   };
+  vi.mocked(getAppPaths).mockResolvedValue({ data_dir: "C:\\data", data_dir_exists: true });
   vi.mocked(getCatalogInfo).mockResolvedValue(catalogInfo);
   const networkState = {
     offlineMode: false,
@@ -87,6 +116,53 @@ beforeEach(() => {
     bytesDown: 0,
   };
   vi.mocked(getNetworkState).mockResolvedValue(networkState);
+  vi.mocked(getStorageInfo).mockResolvedValue({
+    modelFolder: "C:\\models",
+    modelFiles: [],
+    incompleteDownloads: [],
+    catalogCacheBytes: 0,
+    totalBytes: 0,
+  });
+  vi.mocked(startDownload).mockImplementation(async (id) => ({
+    id,
+    state: { kind: "queued" },
+    done: 0,
+    total: 1024,
+    bytesPerSec: 0,
+    etaSecs: null,
+  }));
+  vi.mocked(cancelDownload).mockImplementation(async (id) => ({
+    id,
+    state: { kind: "cancelled" },
+    done: 0,
+    total: 1024,
+    bytesPerSec: 0,
+    etaSecs: null,
+  }));
+  vi.mocked(pauseDownload).mockImplementation(async (id) => ({
+    id,
+    state: { kind: "paused" },
+    done: 512,
+    total: 1024,
+    bytesPerSec: 0,
+    etaSecs: null,
+  }));
+  vi.mocked(resumeDownload).mockImplementation(async (id) => ({
+    id,
+    state: { kind: "queued" },
+    done: 512,
+    total: 1024,
+    bytesPerSec: 0,
+    etaSecs: null,
+  }));
+  vi.mocked(getModelFolder).mockResolvedValue("C:\\models");
+  vi.mocked(listDownloads).mockResolvedValue([]);
+  vi.mocked(listenDownloadProgress).mockResolvedValue(vi.fn());
+  vi.mocked(chooseModelFolder).mockResolvedValue(null);
+  vi.mocked(setModelFolder).mockImplementation(async (folder) => folder);
+  vi.mocked(deleteStorageFile).mockResolvedValue();
+  vi.mocked(openModelFileFolder).mockResolvedValue();
+  vi.mocked(openModelFolder).mockResolvedValue();
   vi.mocked(getNetworkActivity).mockResolvedValue([]);
   vi.mocked(listenNetworkState).mockResolvedValue(vi.fn());
   vi.mocked(clearNetworkActivity).mockResolvedValue();
@@ -126,15 +202,69 @@ function renderScanView(profile = PRESETS.laptop8_cpu) {
 
 function renderModelsView(profile: HardwareProfile | null) {
   return render(
-    <ToastProvider>
-      <TooltipProvider>
-        <ModelsView profile={profile} />
-      </TooltipProvider>
-    </ToastProvider>,
+    <DownloadsProvider>
+      <ToastProvider>
+        <TooltipProvider>
+          <ModelsView profile={profile} />
+        </TooltipProvider>
+      </ToastProvider>
+    </DownloadsProvider>,
+  );
+}
+
+function DownloadAttemptHarness() {
+  const downloads = useDownloads();
+  return (
+    <>
+      <button onClick={() => void downloads.cancel("model", true)}>Cancel</button>
+      <button onClick={() => void downloads.resume("model")}>Resume</button>
+      <output>{downloads.byId("model")?.state.kind ?? "missing"}</output>
+    </>
   );
 }
 
 describe("ModelsView", () => {
+  it("does not let a delayed cancel forget a newer resumed attempt", async () => {
+    const downloading: DownloadProgress = {
+      id: "model",
+      state: { kind: "downloading" },
+      done: 512,
+      total: 1024,
+      bytesPerSec: 0,
+      etaSecs: null,
+    };
+    vi.mocked(listDownloads).mockResolvedValue([downloading]);
+    let emitProgress: ((next: DownloadProgress) => void) | undefined;
+    vi.mocked(listenDownloadProgress).mockImplementation(async (onProgress) => {
+      emitProgress = onProgress;
+      return () => undefined;
+    });
+    let resolveCancel: ((progress: DownloadProgress) => void) | undefined;
+    vi.mocked(cancelDownload).mockImplementation(() => new Promise((resolve) => {
+      resolveCancel = resolve;
+    }));
+    render(<DownloadsProvider><DownloadAttemptHarness /></DownloadsProvider>);
+
+    await waitFor(() => expect(screen.getByText("downloading")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(cancelDownload).toHaveBeenCalledWith("model", true));
+    act(() => {
+      emitProgress?.({ ...downloading, state: { kind: "cancelled" } });
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+    await waitFor(() => expect(screen.getByText("queued")).toBeInTheDocument());
+
+    await act(async () => {
+      resolveCancel?.({
+        ...downloading,
+        state: { kind: "cancelled" },
+        done: 0,
+      });
+    });
+
+    expect(screen.getByText("queued")).toBeInTheDocument();
+  });
+
   it("shows the scan-first empty state when no hardware profile exists", () => {
     renderModelsView(null);
 
@@ -161,6 +291,193 @@ describe("ModelsView", () => {
     });
     expect(screen.getByText(en.views.models.noMatch)).toBeInTheDocument();
     expect(recommendModels).toHaveBeenCalledWith(PRESETS.desktop_3060, 4096);
+  });
+
+  it("restores measurable progress and exposes pause and resume actions", async () => {
+    const recommendations = rankModels(PRESETS.desktop_3060, MODELS, 4096);
+    const target = recommendations.find((item) => item.estimate.fit !== "wont_fit");
+    if (!target) throw new Error("Expected a fitting model in the test preset.");
+    vi.mocked(recommendModels).mockResolvedValue(recommendations);
+    const progress: DownloadProgress = {
+      id: target.model.id,
+      state: { kind: "downloading" },
+      done: 1024 ** 2,
+      total: 2 * 1024 ** 2,
+      bytesPerSec: 512 * 1024,
+      etaSecs: 2,
+    };
+    vi.mocked(listDownloads).mockResolvedValue([progress]);
+    let emitProgress: ((next: DownloadProgress) => void) | undefined;
+    vi.mocked(listenDownloadProgress).mockImplementation(async (onProgress) => {
+      emitProgress = onProgress;
+      return () => undefined;
+    });
+    vi.mocked(pauseDownload).mockImplementation(async (id) => {
+      const paused: DownloadProgress = { ...progress, id, state: { kind: "paused" } };
+      emitProgress?.(paused);
+      return { ...progress, id };
+    });
+    renderModelsView(PRESETS.desktop_3060);
+
+    const card = await screen.findByRole("group", { name: target.model.name });
+    expect(within(card).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "50");
+    expect(within(card).getByText(en.views.downloads.percent(50))).toBeInTheDocument();
+    expect(within(card).getByText(/Estimated .*\/s/)).toBeInTheDocument();
+
+    fireEvent.click(within(card).getByRole("button", { name: en.views.downloads.pause }));
+    await waitFor(() => {
+      expect(pauseDownload).toHaveBeenCalledWith(target.model.id);
+      expect(within(card).getByRole("button", { name: en.views.downloads.resume })).toBeInTheDocument();
+    });
+  });
+
+  it("starts a user-selected model download from its recommendation card", async () => {
+    const recommendations = rankModels(PRESETS.desktop_3060, MODELS, 4096);
+    const target = recommendations.find((item) => item.estimate.fit !== "wont_fit");
+    if (!target) throw new Error("Expected a fitting model in the test preset.");
+    vi.mocked(recommendModels).mockResolvedValue(recommendations);
+    renderModelsView(PRESETS.desktop_3060);
+
+    const card = await screen.findByRole("group", { name: target.model.name });
+    fireEvent.click(within(card).getByRole("button", { name: /Download ·/ }));
+
+    await waitFor(() => {
+      expect(startDownload).toHaveBeenCalledWith(
+        target.model.id,
+        PRESETS.desktop_3060,
+        4096,
+      );
+      expect(within(card).getByRole("button", { name: en.views.downloads.pause })).toBeInTheDocument();
+    });
+  });
+
+  it("deletes and resets a canceled download, ignoring late progress events", async () => {
+    const recommendations = rankModels(PRESETS.desktop_3060, MODELS, 4096);
+    const target = recommendations.find((item) => item.estimate.fit !== "wont_fit");
+    if (!target) throw new Error("Expected a fitting model in the test preset.");
+    vi.mocked(recommendModels).mockResolvedValue(recommendations);
+    let emitProgress: ((next: DownloadProgress) => void) | undefined;
+    vi.mocked(listenDownloadProgress).mockImplementation(async (onProgress) => {
+      emitProgress = onProgress;
+      return () => undefined;
+    });
+    vi.mocked(cancelDownload).mockImplementation(async (id) => {
+      emitProgress?.({
+        id,
+        state: { kind: "cancelled" },
+        done: 512,
+        total: 1024,
+        bytesPerSec: 0,
+        etaSecs: null,
+      });
+      return {
+        id,
+        state: { kind: "cancelled" },
+        done: 0,
+        total: 1024,
+        bytesPerSec: 0,
+        etaSecs: null,
+      };
+    });
+    renderModelsView(PRESETS.desktop_3060);
+
+    const card = await screen.findByRole("group", { name: target.model.name });
+    fireEvent.click(within(card).getByRole("button", { name: /Download ·/ }));
+    fireEvent.click(await within(card).findByRole("button", { name: en.views.downloads.cancel }));
+
+    await waitFor(() => {
+      expect(cancelDownload).toHaveBeenCalledWith(target.model.id, true);
+      expect(within(card).getByRole("button", { name: /Download ·/ })).toBeInTheDocument();
+    });
+    emitProgress?.({
+      id: target.model.id,
+      state: { kind: "cancelled" },
+      done: 512,
+      total: 1024,
+      bytesPerSec: 0,
+      etaSecs: null,
+    });
+    expect(within(card).queryByText(en.views.downloads.cancelled)).not.toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: /Download ·/ })).toBeInTheDocument();
+  });
+
+  it("keeps Cancel available while a download is verifying", async () => {
+    const recommendations = rankModels(PRESETS.desktop_3060, MODELS, 4096);
+    const target = recommendations.find((item) => item.estimate.fit !== "wont_fit");
+    if (!target) throw new Error("Expected a fitting model in the test preset.");
+    vi.mocked(recommendModels).mockResolvedValue(recommendations);
+    let emitProgress: ((next: DownloadProgress) => void) | undefined;
+    vi.mocked(listenDownloadProgress).mockImplementation(async (onProgress) => {
+      emitProgress = onProgress;
+      return () => undefined;
+    });
+    vi.mocked(listDownloads).mockResolvedValue([{
+      id: target.model.id,
+      state: { kind: "downloading" },
+      done: 1024,
+      total: 2048,
+      bytesPerSec: 0,
+      etaSecs: null,
+    }]);
+    renderModelsView(PRESETS.desktop_3060);
+
+    const card = await screen.findByRole("group", { name: target.model.name });
+    await waitFor(() => {
+      expect(within(card).getByRole("button", { name: en.views.downloads.pause })).toBeInTheDocument();
+    });
+    await act(async () => {
+      emitProgress?.({
+        id: target.model.id,
+        state: { kind: "verifying" },
+        done: 2048,
+        total: 2048,
+        bytesPerSec: 0,
+        etaSecs: null,
+      });
+    });
+
+    expect(within(card).queryByRole("button", { name: en.views.downloads.pause })).not.toBeInTheDocument();
+    fireEvent.click(within(card).getByRole("button", { name: en.views.downloads.cancel }));
+    await waitFor(() => expect(cancelDownload).toHaveBeenCalledWith(target.model.id, true));
+  });
+
+  it("resumes a canceled partial download instead of creating a duplicate", async () => {
+    const recommendations = rankModels(PRESETS.desktop_3060, MODELS, 4096);
+    const target = recommendations.find((item) => item.estimate.fit !== "wont_fit");
+    if (!target) throw new Error("Expected a fitting model in the test preset.");
+    vi.mocked(recommendModels).mockResolvedValue(recommendations);
+    vi.mocked(listDownloads).mockResolvedValue([{
+      id: target.model.id,
+      state: { kind: "cancelled" },
+      done: 512,
+      total: 1024,
+      bytesPerSec: 0,
+      etaSecs: null,
+    }]);
+    renderModelsView(PRESETS.desktop_3060);
+
+    const card = await screen.findByRole("group", { name: target.model.name });
+    fireEvent.click(within(card).getByRole("button", { name: en.views.downloads.resume }));
+
+    await waitFor(() => {
+      expect(resumeDownload).toHaveBeenCalledWith(target.model.id);
+      expect(within(card).getByRole("button", { name: en.views.downloads.pause })).toBeInTheDocument();
+    });
+  });
+
+  it("does not offer downloads for models marked Won't fit", async () => {
+    const recommendations = rankModels(PRESETS.desktop_3060, MODELS, 4096).map((item, index) =>
+      index === 0
+        ? { ...item, estimate: { ...item.estimate, fit: "wont_fit" as const } }
+        : item,
+    );
+    const target = recommendations[0];
+    vi.mocked(recommendModels).mockResolvedValue(recommendations);
+    window.localStorage.setItem("aangan.models.showWontFit", "true");
+    renderModelsView(PRESETS.desktop_3060);
+
+    const card = await screen.findByRole("group", { name: target.model.name });
+    expect(within(card).queryByRole("button", { name: /Download ·/ })).not.toBeInTheDocument();
   });
 
   it("reveals non-fitting models in a separate section with a keyboard-operable switch", async () => {
@@ -464,7 +781,221 @@ describe("ScanView", () => {
   });
 });
 
+describe("DownloadsDrawer", () => {
+  it("shows active progress, a folder destination, and the active-count badge", async () => {
+    vi.mocked(listDownloads).mockResolvedValue([{
+      id: "qwen2.5-0.5b-instruct-q4_k_m",
+      state: { kind: "downloading" },
+      done: 1024,
+      total: 2048,
+      bytesPerSec: 512,
+      etaSecs: 2,
+    }]);
+    const { unmount } = render(
+      <DownloadsProvider>
+        <DownloadsButton onClick={vi.fn()} />
+      </DownloadsProvider>,
+    );
+    expect(await screen.findByRole("button", {
+      name: `Downloads, ${en.views.downloads.activeCount(1)}`,
+    })).toBeInTheDocument();
+    unmount();
+
+    render(
+      <DownloadsProvider>
+        <ToastProvider>
+          <DownloadsDrawer
+            open
+            onOpenChange={vi.fn()}
+            profile={PRESETS.desktop_3060}
+          />
+        </ToastProvider>
+      </DownloadsProvider>,
+    );
+
+    expect(await screen.findByText(en.views.downloads.savedTo("C:\\models"))).toBeInTheDocument();
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "50");
+    fireEvent.click(screen.getByRole("button", { name: en.views.downloads.openFolder }));
+    await waitFor(() => expect(openModelFolder).toHaveBeenCalled());
+  });
+});
+
 describe("SettingsView and FirstRunWizard", () => {
+  it("changes the model folder through the native folder picker", async () => {
+    vi.mocked(chooseModelFolder).mockResolvedValue("C:\\LocalModels");
+    vi.mocked(setModelFolder).mockResolvedValue("C:\\LocalModels");
+    vi.mocked(getStorageInfo)
+      .mockResolvedValueOnce({
+        modelFolder: "C:\\models",
+        modelFiles: [],
+        incompleteDownloads: [],
+        catalogCacheBytes: 0,
+        totalBytes: 0,
+      })
+      .mockResolvedValueOnce({
+        modelFolder: "C:\\LocalModels",
+        modelFiles: [{
+          path: "C:\\LocalModels\\small.gguf",
+          name: "small.gguf",
+          sizeBytes: 1024,
+          modelId: "small-model",
+        }],
+        incompleteDownloads: [],
+        catalogCacheBytes: 0,
+        totalBytes: 1024,
+      });
+    render(<ToastProvider><SettingsView /></ToastProvider>);
+
+    fireEvent.click(await screen.findByRole("button", { name: en.views.settings.storage.chooseFolder }));
+    expect(await screen.findByText("C:\\LocalModels")).toBeInTheDocument();
+    expect(await screen.findByText("small.gguf")).toBeInTheDocument();
+    expect(setModelFolder).toHaveBeenCalledWith("C:\\LocalModels");
+    expect(getStorageInfo).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries loading storage after an initial error", async () => {
+    vi.mocked(getStorageInfo)
+      .mockRejectedValueOnce(new Error("storage unavailable"))
+      .mockResolvedValueOnce({
+        modelFolder: "C:\\recovered",
+        modelFiles: [],
+        incompleteDownloads: [],
+        catalogCacheBytes: 0,
+        totalBytes: 0,
+      });
+    render(<ToastProvider><SettingsView /></ToastProvider>);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      en.views.settings.storage.loadFailed("storage unavailable"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: en.views.settings.storage.retry }));
+
+    expect(await screen.findByText("C:\\recovered")).toBeInTheDocument();
+    expect(getStorageInfo).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes storage inventory after a model download completes", async () => {
+    vi.mocked(getStorageInfo)
+      .mockResolvedValueOnce({
+        modelFolder: "C:\\models",
+        modelFiles: [],
+        incompleteDownloads: [],
+        catalogCacheBytes: 0,
+        totalBytes: 0,
+      })
+      .mockResolvedValueOnce({
+        modelFolder: "C:\\models",
+        modelFiles: [{
+          path: "C:\\models\\family\\small.gguf",
+          name: "small.gguf",
+          sizeBytes: 1024,
+          modelId: "small-model",
+        }],
+        incompleteDownloads: [],
+        catalogCacheBytes: 0,
+        totalBytes: 1024,
+      });
+    render(<ToastProvider><SettingsView /></ToastProvider>);
+
+    expect(await screen.findByText(en.views.settings.storage.emptyModels)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: en.views.settings.storage.refresh }));
+
+    expect(await screen.findByText("C:\\models\\family\\small.gguf")).toBeInTheDocument();
+    expect(getStorageInfo).toHaveBeenCalledTimes(2);
+  });
+
+  it("ignores an outdated storage refresh after changing folders", async () => {
+    const originalInfo: StorageInfo = {
+      modelFolder: "C:\\models",
+      modelFiles: [{
+        path: "C:\\models\\small.gguf",
+        name: "small.gguf",
+        sizeBytes: 1024,
+        modelId: "small-model",
+      }],
+      incompleteDownloads: [],
+      catalogCacheBytes: 0,
+      totalBytes: 1024,
+    };
+    const updatedInfo: StorageInfo = {
+      modelFolder: "C:\\LocalModels",
+      modelFiles: [{
+        path: "C:\\LocalModels\\new.gguf",
+        name: "new.gguf",
+        sizeBytes: 2048,
+        modelId: "new-model",
+      }],
+      incompleteDownloads: [],
+      catalogCacheBytes: 0,
+      totalBytes: 2048,
+    };
+    let resolveStaleInfo: ((info: StorageInfo) => void) | undefined;
+    vi.mocked(getStorageInfo)
+      .mockResolvedValueOnce(originalInfo)
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveStaleInfo = resolve;
+      }))
+      .mockResolvedValueOnce(updatedInfo);
+    vi.mocked(chooseModelFolder).mockResolvedValue("C:\\LocalModels");
+    render(<ToastProvider><SettingsView /></ToastProvider>);
+
+    fireEvent.click(await screen.findByRole("button", { name: en.views.settings.storage.delete }));
+    fireEvent.click(screen.getByRole("button", { name: en.views.settings.storage.confirmDelete }));
+    await waitFor(() => expect(resolveStaleInfo).toBeDefined());
+
+    fireEvent.click(screen.getByRole("button", { name: en.views.settings.storage.chooseFolder }));
+    expect(await screen.findByText("new.gguf")).toBeInTheDocument();
+    expect(screen.getByText("C:\\LocalModels")).toBeInTheDocument();
+    resolveStaleInfo?.(originalInfo);
+    await waitFor(() => expect(getStorageInfo).toHaveBeenCalledTimes(3));
+    expect(screen.getByText("C:\\LocalModels")).toBeInTheDocument();
+    expect(screen.queryByText("C:\\models")).not.toBeInTheDocument();
+  });
+
+  it("confirms storage deletion and removes the download from the shared list", async () => {
+    vi.mocked(getStorageInfo).mockResolvedValue({
+      modelFolder: "C:\\models",
+      modelFiles: [
+        {
+          path: "C:\\models\\family-a\\small.gguf",
+          name: "small.gguf",
+          sizeBytes: 1024,
+          modelId: "small-model-a",
+        },
+        {
+          path: "C:\\models\\family-b\\small.gguf",
+          name: "small.gguf",
+          sizeBytes: 2048,
+          modelId: "small-model-b",
+        },
+      ],
+      incompleteDownloads: [],
+      catalogCacheBytes: 0,
+      totalBytes: 3072,
+    });
+    const onDownloadDeleted = vi.fn();
+    render(<ToastProvider><SettingsView onDownloadDeleted={onDownloadDeleted} /></ToastProvider>);
+
+    const firstPath = await screen.findByText("C:\\models\\family-a\\small.gguf");
+    expect(screen.getByText("C:\\models\\family-b\\small.gguf")).toBeInTheDocument();
+    const firstFileRow = firstPath.closest("li");
+    if (!firstFileRow) throw new Error("Expected the first Storage file row.");
+    fireEvent.click(within(firstFileRow).getByRole("button", { name: en.views.settings.storage.delete }));
+    expect(await screen.findByText(en.views.settings.storage.deleteDescription(
+      "small.gguf",
+      "C:\\models\\family-a\\small.gguf",
+    ))).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: en.views.settings.storage.confirmDelete }));
+
+    await waitFor(() => {
+      expect(deleteStorageFile).toHaveBeenCalledWith(
+        "C:\\models\\family-a\\small.gguf",
+        "small-model-a",
+      );
+      expect(onDownloadDeleted).toHaveBeenCalledWith("small-model-a");
+    });
+  });
+
   it("renders the real data path and supports open and copy actions", async () => {
     const dataDir = "C:\\Users\\partv\\AppData\\Local\\Aangan";
     const writeText = vi.fn().mockResolvedValue(undefined);

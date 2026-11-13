@@ -1,6 +1,6 @@
-use aangan_net::{NetGate, NetRecord, NetState};
+use aangan_net::{DlState, NetGate, NetRecord, NetState, Progress};
 use aangan_types::HardwareProfile;
-use fitcalc::{Recommendation, Tunables, recommend};
+use fitcalc::{Fit, Recommendation, Tunables, recommend};
 use hwprobe::{ProbeOptions, probe};
 use serde::Serialize;
 use std::io::Write;
@@ -10,6 +10,8 @@ use tauri::{Emitter, Manager, State, path::BaseDirectory};
 use tauri_plugin_opener::OpenerExt;
 
 mod catalog;
+mod downloads;
+mod storage;
 
 const MAX_TEXT_FILE_BYTES: usize = 5 * 1024 * 1024;
 const BUNDLED_CATALOG: &str = include_str!("../../../../catalog/models.v1.json");
@@ -154,6 +156,203 @@ async fn refresh_catalog(
     catalog::refresh_catalog(&gate, &app_data_dir(&app)?, BUNDLED_CATALOG, consent_once).await
 }
 
+async fn restore_downloads(
+    manager: &downloads::DownloadManager,
+    data_dir: &Path,
+    catalog_data: &catalog::Catalog,
+) -> Result<(), String> {
+    let data_dir = data_dir.to_path_buf();
+    let catalog_data = catalog_data.clone();
+    let specs = tauri::async_runtime::spawn_blocking(move || {
+        let default_folder = storage::default_model_folder(&data_dir);
+        let folders = catalog::managed_model_folders(&data_dir, &default_folder)?;
+        storage::download_specs_for_roots(&catalog_data, &folders)
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    manager.restore(specs).await
+}
+
+#[tauri::command]
+async fn download_model(
+    app: tauri::AppHandle,
+    manager: State<'_, downloads::DownloadManager>,
+    model_id: String,
+    profile: HardwareProfile,
+    context: u32,
+) -> Result<Progress, String> {
+    let data_dir = app_data_dir(&app)?;
+    let loaded = catalog::load_catalog(&data_dir, BUNDLED_CATALOG)?;
+    let specs = catalog::model_specs(&loaded.catalog);
+    let recommendation = recommend(&profile, &specs, context, &Tunables::default())
+        .into_iter()
+        .find(|recommendation| recommendation.model.id == model_id)
+        .ok_or_else(|| "That model is not available in the catalog.".to_string())?;
+    if recommendation.estimate.fit == Fit::WontFit {
+        return Err("This model is marked Won't fit for the current hardware profile.".into());
+    }
+    let info = catalog::model_download_info(&loaded.catalog, &model_id).ok_or_else(|| {
+        "The catalog does not contain download metadata for this model.".to_string()
+    })?;
+    restore_downloads(&manager, &data_dir, &loaded.catalog).await?;
+    let folder = storage::current_model_folder(&data_dir)?;
+    let mut spec = storage::download_spec(&folder, &info)?;
+    spec.dest = storage::model_destination(&folder, &info).await?;
+    manager.start(spec).await
+}
+
+#[tauri::command]
+async fn download_pause(
+    manager: State<'_, downloads::DownloadManager>,
+    id: String,
+) -> Result<Progress, String> {
+    manager.pause(&id).await
+}
+
+#[tauri::command]
+async fn download_resume(
+    app: tauri::AppHandle,
+    manager: State<'_, downloads::DownloadManager>,
+    id: String,
+) -> Result<Progress, String> {
+    let data_dir = app_data_dir(&app)?;
+    let loaded = catalog::load_catalog(&data_dir, BUNDLED_CATALOG)?;
+    restore_downloads(&manager, &data_dir, &loaded.catalog).await?;
+    manager.resume(&id).await
+}
+
+#[tauri::command]
+async fn download_cancel(
+    manager: State<'_, downloads::DownloadManager>,
+    id: String,
+    delete_partial: bool,
+) -> Result<Progress, String> {
+    let progress = manager.cancel(&id, delete_partial).await?;
+    if delete_partial && progress.state == DlState::Cancelled {
+        manager.forget(&id)?;
+    }
+    Ok(progress)
+}
+
+#[tauri::command]
+async fn downloads_list(
+    app: tauri::AppHandle,
+    manager: State<'_, downloads::DownloadManager>,
+) -> Result<Vec<Progress>, String> {
+    let manager = manager.inner().clone();
+    let specs = tauri::async_runtime::spawn_blocking(move || {
+        let data_dir = app_data_dir(&app)?;
+        let loaded = catalog::load_catalog(&data_dir, BUNDLED_CATALOG)?;
+        let default_folder = storage::default_model_folder(&data_dir);
+        let folders = catalog::managed_model_folders(&data_dir, &default_folder)?;
+        storage::download_specs_for_roots(&loaded.catalog, &folders)
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    manager.restore(specs).await?;
+    manager.list()
+}
+
+#[tauri::command]
+fn get_model_folder(app: tauri::AppHandle) -> Result<String, String> {
+    let data_dir = app_data_dir(&app)?;
+    let folder = storage::current_model_folder(&data_dir)?;
+    Ok(folder.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn set_model_folder(app: tauri::AppHandle, folder: String) -> Result<String, String> {
+    let data_dir = app_data_dir(&app)?;
+    let default_folder = storage::default_model_folder(&data_dir);
+    let validated = storage::validate_model_folder(Path::new(&folder))?;
+    catalog::set_model_folder(&data_dir, &default_folder, &validated)?;
+    Ok(validated.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+async fn get_storage_info(app: tauri::AppHandle) -> Result<storage::StorageInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let data_dir = app_data_dir(&app)?;
+        let loaded = catalog::load_catalog(&data_dir, BUNDLED_CATALOG)?;
+        storage::storage_info(&data_dir, &loaded.catalog)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn delete_storage_file(
+    app: tauri::AppHandle,
+    manager: State<'_, downloads::DownloadManager>,
+    path: String,
+    model_id: Option<String>,
+) -> Result<(), String> {
+    let requested = PathBuf::from(path);
+    let (data_dir, safe) = tauri::async_runtime::spawn_blocking(move || {
+        let data_dir = app_data_dir(&app)?;
+        let safe = storage::safe_managed_file(&data_dir, &requested)?;
+        Ok::<_, String>((data_dir, safe))
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    let reservation = manager.reserve_storage_delete(&safe)?;
+    match (model_id.as_deref(), reservation.as_deref()) {
+        (Some(expected), Some(actual)) if expected != actual => {
+            manager.finish_storage_delete(&safe, reservation.as_deref(), false)?;
+            return Err("The selected model does not match the Storage file.".into());
+        }
+        _ => {}
+    }
+    let delete_path = safe.clone();
+    let delete_result = tauri::async_runtime::spawn_blocking(move || {
+        storage::delete_managed_file(&data_dir, &delete_path)
+    })
+    .await
+    .map_err(|error| error.to_string());
+    match delete_result {
+        Ok(Ok(())) => manager.finish_storage_delete(&safe, reservation.as_deref(), true)?,
+        Ok(Err(error)) => {
+            manager.finish_storage_delete(&safe, reservation.as_deref(), false)?;
+            return Err(error);
+        }
+        Err(error) => {
+            manager.finish_storage_delete(&safe, reservation.as_deref(), false)?;
+            return Err(error);
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn open_model_folder(app: tauri::AppHandle) -> Result<(), String> {
+    let data_dir = app_data_dir(&app)?;
+    let folder = storage::current_model_folder(&data_dir)?;
+    std::fs::create_dir_all(&folder)
+        .map_err(|error| format!("could not create the model folder: {error}"))?;
+    open_folder(&folder)
+}
+
+#[tauri::command]
+fn open_model_file_folder(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    let data_dir = app_data_dir(&app)?;
+    let folder = storage::managed_file_parent(&data_dir, Path::new(&path))?;
+    open_folder(&folder)
+}
+
+#[cfg(windows)]
+fn open_folder(path: &Path) -> Result<(), String> {
+    std::process::Command::new("explorer.exe")
+        .arg(path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("could not open folder {}: {error}", path.display()))
+}
+
+#[cfg(not(windows))]
+fn open_folder(_path: &Path) -> Result<(), String> {
+    Err("Opening model folders is only supported on Windows.".into())
+}
+
 #[tauri::command]
 fn get_network_state(gate: State<'_, Arc<NetGate>>) -> Result<NetState, String> {
     gate.state().map_err(|error| error.to_string())
@@ -170,20 +369,44 @@ fn clear_network_activity(gate: State<'_, Arc<NetGate>>) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn set_offline_mode(
+async fn set_offline_mode(
     app: tauri::AppHandle,
     gate: State<'_, Arc<NetGate>>,
+    manager: State<'_, downloads::DownloadManager>,
     offline_mode: bool,
 ) -> Result<NetState, String> {
     let data_dir = app_data_dir(&app)?;
     let previous = gate.is_offline();
-    gate.set_offline(offline_mode)
-        .map_err(|error| error.to_string())?;
+    if offline_mode {
+        manager.set_offline(true).await?;
+    }
+    if let Err(error) = gate.set_offline(offline_mode) {
+        if offline_mode {
+            manager
+                .set_offline(previous)
+                .await
+                .map_err(|rollback_error| {
+                    format!(
+                        "{error}; additionally could not restore download state: {rollback_error}"
+                    )
+                })?;
+        }
+        return Err(error.to_string());
+    }
     if let Err(error) = catalog::set_offline_mode(&data_dir, offline_mode) {
         gate.set_offline(previous).map_err(|rollback_error| {
             format!("{error}; additionally could not restore network state: {rollback_error}")
         })?;
+        manager
+            .set_offline(previous)
+            .await
+            .map_err(|rollback_error| {
+                format!("{error}; additionally could not restore download state: {rollback_error}")
+            })?;
         return Err(error);
+    }
+    if !offline_mode {
+        manager.set_offline(false).await?;
     }
     gate.state().map_err(|error| error.to_string())
 }
@@ -258,6 +481,17 @@ pub fn run() -> Result<(), tauri::Error> {
             set_catalog_refresh_consent,
             reset_catalog,
             refresh_catalog,
+            download_model,
+            download_pause,
+            download_resume,
+            download_cancel,
+            downloads_list,
+            get_model_folder,
+            set_model_folder,
+            get_storage_info,
+            delete_storage_file,
+            open_model_folder,
+            open_model_file_folder,
             get_network_state,
             get_network_activity,
             clear_network_activity,
@@ -298,7 +532,26 @@ pub fn run() -> Result<(), tauri::Error> {
                     }
                 }
             });
+            let download_app = app.handle().clone();
+            let downloads = downloads::DownloadManager::new(Arc::clone(&gate), move |progress| {
+                if let Err(error) = download_app.emit("downloads://progress", progress) {
+                    eprintln!("could not emit download progress: {error}");
+                }
+            });
+            let loaded =
+                catalog::load_catalog(&data_dir, BUNDLED_CATALOG).map_err(std::io::Error::other)?;
+            let restore_manager = downloads.clone();
+            let restore_data_dir = data_dir.clone();
+            let restore_catalog = loaded.catalog.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(error) =
+                    restore_downloads(&restore_manager, &restore_data_dir, &restore_catalog).await
+                {
+                    eprintln!("could not restore model download state: {error}");
+                }
+            });
             app.manage(gate);
+            app.manage(downloads);
             #[cfg(windows)]
             {
                 let icon = tauri::image::Image::from_app_icon_resource(128)?;

@@ -6,9 +6,9 @@ import { APP_INFO, MODELS, PRESETS } from "@/api/presets";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
-vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn() }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(), save: vi.fn() }));
 
-import { save } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 
 beforeEach(() => {
   Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
@@ -74,6 +74,15 @@ describe("browser API wrappers", () => {
       defaultPath: expect.stringMatching(/^aangan-hardware-report-\d{4}-\d{2}-\d{2}\.json$/),
       filters: [{ name: "JSON", extensions: ["json"] }],
     });
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when the model-folder picker is cancelled", async () => {
+    vi.mocked(open).mockResolvedValue(null);
+    const { chooseModelFolder } = await import("@/api/api");
+
+    await expect(chooseModelFolder()).resolves.toBeNull();
+    expect(open).toHaveBeenCalledWith({ directory: true, multiple: false });
     expect(invoke).not.toHaveBeenCalled();
   });
 
@@ -186,6 +195,21 @@ describe("browser API wrappers", () => {
     expect(invoke).not.toHaveBeenCalled();
     expect(listen).not.toHaveBeenCalled();
   });
+
+  it("does not start model downloads or access Storage from the browser", async () => {
+    const { getStorageInfo, listDownloads, listenDownloadProgress, startDownload } =
+      await import("@/api/api");
+
+    await expect(listDownloads()).resolves.toEqual([]);
+    await expect(listenDownloadProgress(vi.fn())).resolves.toBeTypeOf("function");
+    await expect(startDownload("model", PRESETS.desktop_3060, 4096)).rejects.toThrow(
+      "Model downloads are available only in the desktop app.",
+    );
+    await expect(getStorageInfo()).rejects.toThrow(
+      "Model storage is available only in the desktop app.",
+    );
+    expect(invoke).not.toHaveBeenCalled();
+  });
 });
 
 it("delegates scans and recommendations to Tauri when its runtime is present", async () => {
@@ -293,4 +317,71 @@ it("opens network access documentation through the native shell", async () => {
 
   await expect(openNetworkDocs()).resolves.toBeUndefined();
   expect(invoke).toHaveBeenCalledWith("open_network_docs");
+});
+
+it("routes download and storage controls through Tauri commands", async () => {
+  Object.defineProperty(window, "__TAURI_INTERNALS__", {
+    configurable: true,
+    value: {},
+  });
+  const progress = {
+    id: "model",
+    state: { kind: "queued" },
+    done: 0,
+    total: 1024,
+    bytesPerSec: 0,
+    etaSecs: null,
+  };
+  vi.mocked(invoke).mockResolvedValue([progress]);
+  const unlisten = vi.fn();
+  vi.mocked(listen).mockResolvedValue(unlisten);
+  const {
+    cancelDownload,
+    deleteStorageFile,
+    getStorageInfo,
+    listDownloads,
+    listenDownloadProgress,
+    openModelFileFolder,
+    openModelFolder,
+    pauseDownload,
+    resumeDownload,
+    setModelFolder,
+    startDownload,
+  } = await import("@/api/api");
+
+  await listDownloads();
+  await listenDownloadProgress(vi.fn());
+  await startDownload("model", PRESETS.desktop_3060, 4096);
+  await pauseDownload("model");
+  await resumeDownload("model");
+  await cancelDownload("model", false);
+  await setModelFolder("C:\\models");
+  await getStorageInfo();
+  await deleteStorageFile("C:\\models\\model.gguf", "model");
+  await openModelFolder();
+  await openModelFileFolder("C:\\models\\model.gguf");
+
+  expect(invoke).toHaveBeenNthCalledWith(1, "downloads_list");
+  expect(listen).toHaveBeenCalledWith("downloads://progress", expect.any(Function));
+  expect(invoke).toHaveBeenNthCalledWith(2, "download_model", {
+    modelId: "model",
+    profile: PRESETS.desktop_3060,
+    context: 4096,
+  });
+  expect(invoke).toHaveBeenNthCalledWith(3, "download_pause", { id: "model" });
+  expect(invoke).toHaveBeenNthCalledWith(4, "download_resume", { id: "model" });
+  expect(invoke).toHaveBeenNthCalledWith(5, "download_cancel", {
+    id: "model",
+    deletePartial: false,
+  });
+  expect(invoke).toHaveBeenNthCalledWith(6, "set_model_folder", { folder: "C:\\models" });
+  expect(invoke).toHaveBeenNthCalledWith(7, "get_storage_info");
+  expect(invoke).toHaveBeenNthCalledWith(8, "delete_storage_file", {
+    path: "C:\\models\\model.gguf",
+    modelId: "model",
+  });
+  expect(invoke).toHaveBeenNthCalledWith(9, "open_model_folder");
+  expect(invoke).toHaveBeenNthCalledWith(10, "open_model_file_folder", {
+    path: "C:\\models\\model.gguf",
+  });
 });

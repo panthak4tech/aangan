@@ -46,6 +46,39 @@ export interface NetworkActivity {
   note: string;
 }
 
+export type DownloadState =
+  | { kind: "queued" }
+  | { kind: "downloading" }
+  | { kind: "verifying" }
+  | { kind: "done" }
+  | { kind: "paused" }
+  | { kind: "cancelled" }
+  | { kind: "failed"; message: string };
+
+export interface DownloadProgress {
+  id: string;
+  state: DownloadState;
+  done: number;
+  total: number;
+  bytesPerSec: number;
+  etaSecs: number | null;
+}
+
+export interface StorageFile {
+  path: string;
+  name: string;
+  sizeBytes: number;
+  modelId: string | null;
+}
+
+export interface StorageInfo {
+  modelFolder: string;
+  modelFiles: StorageFile[];
+  incompleteDownloads: StorageFile[];
+  catalogCacheBytes: number;
+  totalBytes: number;
+}
+
 export interface GpuInfo {
   name: string;
   vendor: GpuVendor;

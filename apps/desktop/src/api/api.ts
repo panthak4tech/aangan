@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { save } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import { getDevPreset, getFailScans } from "./devPreset";
 import { rankModels } from "./estimate";
 import { APP_INFO, MODELS, PRESETS } from "./presets";
@@ -8,10 +8,12 @@ import type {
   AppPaths,
   CatalogInfo,
   CatalogRefreshResult,
+  DownloadProgress,
   HardwareProfile,
   NetworkActivity,
   NetworkState,
   Recommendation,
+  StorageInfo,
 } from "./types";
 
 export { APP_INFO };
@@ -112,6 +114,85 @@ export async function refreshCatalog(consentOnce: boolean): Promise<CatalogRefre
     throw new Error("Catalog refresh is available only in the desktop app.");
   }
   return invoke<CatalogRefreshResult>("refresh_catalog", { consentOnce });
+}
+
+export async function listDownloads(): Promise<DownloadProgress[]> {
+  if (!inTauri) return [];
+  return invoke<DownloadProgress[]>("downloads_list");
+}
+
+export async function listenDownloadProgress(
+  onProgress: (progress: DownloadProgress) => void,
+): Promise<UnlistenFn> {
+  if (!inTauri) return () => {};
+  return listen<DownloadProgress>("downloads://progress", (event) => onProgress(event.payload));
+}
+
+export async function startDownload(
+  modelId: string,
+  profile: HardwareProfile,
+  context: number,
+): Promise<DownloadProgress> {
+  if (!inTauri) {
+    throw new Error("Model downloads are available only in the desktop app.");
+  }
+  return invoke<DownloadProgress>("download_model", { modelId, profile, context });
+}
+
+export async function pauseDownload(id: string): Promise<DownloadProgress> {
+  if (!inTauri) throw new Error("Model downloads are available only in the desktop app.");
+  return invoke<DownloadProgress>("download_pause", { id });
+}
+
+export async function resumeDownload(id: string): Promise<DownloadProgress> {
+  if (!inTauri) throw new Error("Model downloads are available only in the desktop app.");
+  return invoke<DownloadProgress>("download_resume", { id });
+}
+
+export async function cancelDownload(
+  id: string,
+  deletePartial: boolean,
+): Promise<DownloadProgress> {
+  if (!inTauri) throw new Error("Model downloads are available only in the desktop app.");
+  return invoke<DownloadProgress>("download_cancel", { id, deletePartial });
+}
+
+export async function getModelFolder(): Promise<string> {
+  if (!inTauri) throw new Error("Model storage settings are available only in the desktop app.");
+  return invoke<string>("get_model_folder");
+}
+
+export async function chooseModelFolder(): Promise<string | null> {
+  const selected = await open({ directory: true, multiple: false });
+  return typeof selected === "string" ? selected : null;
+}
+
+export async function setModelFolder(folder: string): Promise<string> {
+  if (!inTauri) throw new Error("Model storage settings are available only in the desktop app.");
+  return invoke<string>("set_model_folder", { folder });
+}
+
+export async function openModelFolder(): Promise<void> {
+  if (!inTauri) throw new Error("Model storage settings are available only in the desktop app.");
+  return invoke<void>("open_model_folder");
+}
+
+export async function getStorageInfo(): Promise<StorageInfo> {
+  if (!inTauri) throw new Error("Model storage is available only in the desktop app.");
+  return invoke<StorageInfo>("get_storage_info");
+}
+
+export async function deleteStorageFile(
+  path: string,
+  modelId: string | null,
+): Promise<void> {
+  if (!inTauri) throw new Error("Model storage is available only in the desktop app.");
+  return invoke<void>("delete_storage_file", { path, modelId });
+}
+
+export async function openModelFileFolder(path: string): Promise<void> {
+  if (!inTauri) throw new Error("Model storage is available only in the desktop app.");
+  return invoke<void>("open_model_file_folder", { path });
 }
 
 export async function openNetworkDocs(): Promise<void> {

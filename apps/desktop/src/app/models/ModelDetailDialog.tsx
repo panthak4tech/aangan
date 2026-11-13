@@ -1,4 +1,4 @@
-import { AlertTriangle, Download } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import type { HardwareProfile, Recommendation } from "@/api/types";
 import { MemoryBreakdownBar } from "@/components/aangan/MemoryBreakdownBar";
 import { Badge } from "@/components/primitives/badge";
@@ -18,6 +18,7 @@ import { formatBytes } from "../scan/format";
 import { FitBadge } from "./FitBadge";
 import { availableFor } from "./fit";
 import { describePlacement, describeReason } from "./placement";
+import { DownloadActions } from "@/downloads/DownloadActions";
 
 export function ModelDetailDialog({
   rec,
@@ -137,20 +138,17 @@ export function ModelDetailDialog({
                 )}
 
                 <DialogFooter className="gap-2">
-                  <Button variant="outline" onClick={onClose}>
-                    {t.close}
-                  </Button>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span tabIndex={0} className="inline-flex">
-                        <Button disabled aria-disabled>
-                          <Download />
-                          {t.download}
-                        </Button>
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent>{t.downloadSoon}</TooltipContent>
-                  </Tooltip>
+                  {estimate.fit === "wont_fit" ? (
+                    <p className="text-sm text-muted-foreground">{t.downloadWontFit}</p>
+                  ) : (
+                    <DownloadActions
+                      modelId={model.id}
+                      sizeBytes={model.file_size_bytes}
+                      profile={profile}
+                      context={estimate.context}
+                    />
+                  )}
+                  <Button variant="outline" onClick={onClose}>{t.close}</Button>
                 </DialogFooter>
               </>
             );
