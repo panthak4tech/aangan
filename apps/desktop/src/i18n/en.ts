@@ -245,6 +245,7 @@ export const en = {
         body: "Choose where downloaded models are stored. Previously used folders remain managed here.",
         loading: "Loading model storage",
         loadFailed: (reason: string) => `Couldn't read model storage: ${reason}`,
+        retry: "Retry",
         folder: "Model folder",
         chooseFolder: "Choose folder",
         saveFailed: (reason: string) => `Couldn't change the model folder: ${reason}`,

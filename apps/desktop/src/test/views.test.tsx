@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import packageMetadata from "../../package.json";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -33,7 +33,7 @@ import {
   setSubscribedFamilies,
   startDownload,
 } from "@/api/api";
-import type { DownloadProgress, HardwareProfile } from "@/api/types";
+import type { DownloadProgress, HardwareProfile, StorageInfo } from "@/api/types";
 import { MODELS, PRESETS } from "@/api/presets";
 import { rankModels } from "@/api/estimate";
 import { en } from "@/i18n/en";
@@ -347,6 +347,46 @@ describe("ModelsView", () => {
     });
     expect(within(card).queryByText(en.views.downloads.cancelled)).not.toBeInTheDocument();
     expect(within(card).getByRole("button", { name: /Download ·/ })).toBeInTheDocument();
+  });
+
+  it("keeps Cancel available while a download is verifying", async () => {
+    const recommendations = rankModels(PRESETS.desktop_3060, MODELS, 4096);
+    const target = recommendations.find((item) => item.estimate.fit !== "wont_fit");
+    if (!target) throw new Error("Expected a fitting model in the test preset.");
+    vi.mocked(recommendModels).mockResolvedValue(recommendations);
+    let emitProgress: ((next: DownloadProgress) => void) | undefined;
+    vi.mocked(listenDownloadProgress).mockImplementation(async (onProgress) => {
+      emitProgress = onProgress;
+      return () => undefined;
+    });
+    vi.mocked(listDownloads).mockResolvedValue([{
+      id: target.model.id,
+      state: { kind: "downloading" },
+      done: 1024,
+      total: 2048,
+      bytesPerSec: 0,
+      etaSecs: null,
+    }]);
+    renderModelsView(PRESETS.desktop_3060);
+
+    const card = await screen.findByRole("group", { name: target.model.name });
+    await waitFor(() => {
+      expect(within(card).getByRole("button", { name: en.views.downloads.pause })).toBeInTheDocument();
+    });
+    await act(async () => {
+      emitProgress?.({
+        id: target.model.id,
+        state: { kind: "verifying" },
+        done: 2048,
+        total: 2048,
+        bytesPerSec: 0,
+        etaSecs: null,
+      });
+    });
+
+    expect(within(card).queryByRole("button", { name: en.views.downloads.pause })).not.toBeInTheDocument();
+    fireEvent.click(within(card).getByRole("button", { name: en.views.downloads.cancel }));
+    await waitFor(() => expect(cancelDownload).toHaveBeenCalledWith(target.model.id, true));
   });
 
   it("resumes a canceled partial download instead of creating a duplicate", async () => {
@@ -732,11 +772,102 @@ describe("SettingsView and FirstRunWizard", () => {
   it("changes the model folder through the native folder picker", async () => {
     vi.mocked(chooseModelFolder).mockResolvedValue("C:\\LocalModels");
     vi.mocked(setModelFolder).mockResolvedValue("C:\\LocalModels");
+    vi.mocked(getStorageInfo)
+      .mockResolvedValueOnce({
+        modelFolder: "C:\\models",
+        modelFiles: [],
+        incompleteDownloads: [],
+        catalogCacheBytes: 0,
+        totalBytes: 0,
+      })
+      .mockResolvedValueOnce({
+        modelFolder: "C:\\LocalModels",
+        modelFiles: [{
+          path: "C:\\LocalModels\\small.gguf",
+          name: "small.gguf",
+          sizeBytes: 1024,
+          modelId: "small-model",
+        }],
+        incompleteDownloads: [],
+        catalogCacheBytes: 0,
+        totalBytes: 1024,
+      });
     render(<ToastProvider><SettingsView /></ToastProvider>);
 
     fireEvent.click(await screen.findByRole("button", { name: en.views.settings.storage.chooseFolder }));
     expect(await screen.findByText("C:\\LocalModels")).toBeInTheDocument();
+    expect(await screen.findByText("small.gguf")).toBeInTheDocument();
     expect(setModelFolder).toHaveBeenCalledWith("C:\\LocalModels");
+    expect(getStorageInfo).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries loading storage after an initial error", async () => {
+    vi.mocked(getStorageInfo)
+      .mockRejectedValueOnce(new Error("storage unavailable"))
+      .mockResolvedValueOnce({
+        modelFolder: "C:\\recovered",
+        modelFiles: [],
+        incompleteDownloads: [],
+        catalogCacheBytes: 0,
+        totalBytes: 0,
+      });
+    render(<ToastProvider><SettingsView /></ToastProvider>);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      en.views.settings.storage.loadFailed("storage unavailable"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: en.views.settings.storage.retry }));
+
+    expect(await screen.findByText("C:\\recovered")).toBeInTheDocument();
+    expect(getStorageInfo).toHaveBeenCalledTimes(2);
+  });
+
+  it("ignores an outdated storage refresh after changing folders", async () => {
+    const originalInfo: StorageInfo = {
+      modelFolder: "C:\\models",
+      modelFiles: [{
+        path: "C:\\models\\small.gguf",
+        name: "small.gguf",
+        sizeBytes: 1024,
+        modelId: "small-model",
+      }],
+      incompleteDownloads: [],
+      catalogCacheBytes: 0,
+      totalBytes: 1024,
+    };
+    const updatedInfo: StorageInfo = {
+      modelFolder: "C:\\LocalModels",
+      modelFiles: [{
+        path: "C:\\LocalModels\\new.gguf",
+        name: "new.gguf",
+        sizeBytes: 2048,
+        modelId: "new-model",
+      }],
+      incompleteDownloads: [],
+      catalogCacheBytes: 0,
+      totalBytes: 2048,
+    };
+    let resolveStaleInfo: ((info: StorageInfo) => void) | undefined;
+    vi.mocked(getStorageInfo)
+      .mockResolvedValueOnce(originalInfo)
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveStaleInfo = resolve;
+      }))
+      .mockResolvedValueOnce(updatedInfo);
+    vi.mocked(chooseModelFolder).mockResolvedValue("C:\\LocalModels");
+    render(<ToastProvider><SettingsView /></ToastProvider>);
+
+    fireEvent.click(await screen.findByRole("button", { name: en.views.settings.storage.delete }));
+    fireEvent.click(screen.getByRole("button", { name: en.views.settings.storage.confirmDelete }));
+    await waitFor(() => expect(resolveStaleInfo).toBeDefined());
+
+    fireEvent.click(screen.getByRole("button", { name: en.views.settings.storage.chooseFolder }));
+    expect(await screen.findByText("new.gguf")).toBeInTheDocument();
+    expect(screen.getByText("C:\\LocalModels")).toBeInTheDocument();
+    resolveStaleInfo?.(originalInfo);
+    await waitFor(() => expect(getStorageInfo).toHaveBeenCalledTimes(3));
+    expect(screen.getByText("C:\\LocalModels")).toBeInTheDocument();
+    expect(screen.queryByText("C:\\models")).not.toBeInTheDocument();
   });
 
   it("confirms storage deletion and removes the download from the shared list", async () => {

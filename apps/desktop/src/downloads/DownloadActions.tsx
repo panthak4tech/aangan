@@ -125,7 +125,7 @@ export function DownloadActions({
             {state === "failed" ? t.retry : t.resume}
           </Button>
         ) : null}
-        {state === "queued" || state === "downloading" || state === "paused" ? (
+        {state === "queued" || state === "downloading" || state === "paused" || state === "verifying" ? (
           <Button
             variant="outline"
             size="sm"

@@ -9,7 +9,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { AboutDialog } from "@/app/notices/NoticesDialog";
 import {
@@ -110,7 +110,22 @@ export function SettingsView({
   const [deletingFile, setDeletingFile] = useState<StorageFile | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const storageInfoRequest = useRef(0);
   const toast = useToast();
+
+  const refreshStorageInfo = useCallback(async () => {
+    const request = ++storageInfoRequest.current;
+    setStorageLoading(true);
+    setStorageError(null);
+    try {
+      const info = await getStorageInfo();
+      if (request === storageInfoRequest.current) setStorageInfo(info);
+    } catch (error) {
+      if (request === storageInfoRequest.current) setStorageError(errorMessage(error));
+    } finally {
+      if (request === storageInfoRequest.current) setStorageLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -136,16 +151,7 @@ export function SettingsView({
         if (mounted) setCatalogLoading(false);
       });
 
-    void getStorageInfo()
-      .then((info) => {
-        if (mounted) setStorageInfo(info);
-      })
-      .catch((error: unknown) => {
-        if (mounted) setStorageError(errorMessage(error));
-      })
-      .finally(() => {
-        if (mounted) setStorageLoading(false);
-      });
+    void refreshStorageInfo();
 
     let receivedNetworkEvent = false;
     let unlisten: (() => void) | undefined;
@@ -177,9 +183,10 @@ export function SettingsView({
 
     return () => {
       mounted = false;
+      storageInfoRequest.current += 1;
       unlisten?.();
     };
-  }, []);
+  }, [refreshStorageInfo]);
 
   const updateOfflineMode = async (offlineMode: boolean) => {
     setNetworkSaving(true);
@@ -245,13 +252,18 @@ export function SettingsView({
   const chooseStorageFolder = async () => {
     setStorageSaving(true);
     setStorageError(null);
+    let request = storageInfoRequest.current;
     try {
       const selected = await chooseModelFolder();
       if (!selected) return;
-      const folder = await setModelFolder(selected);
-      setStorageInfo((current) => current ? { ...current, modelFolder: folder } : current);
+      request = ++storageInfoRequest.current;
+      setStorageLoading(false);
+      await setModelFolder(selected);
+      await refreshStorageInfo();
     } catch (error) {
-      setStorageError(t.storage.saveFailed(errorMessage(error)));
+      if (request === storageInfoRequest.current) {
+        setStorageError(t.storage.saveFailed(errorMessage(error)));
+      }
     } finally {
       setStorageSaving(false);
     }
@@ -283,12 +295,7 @@ export function SettingsView({
       await deleteStorageFile(deletingFile.path, deletingFile.modelId);
       if (deletingFile.modelId) onDownloadDeleted?.(deletingFile.modelId);
       setDeletingFile(null);
-      try {
-        setStorageInfo(await getStorageInfo());
-        setStorageError(null);
-      } catch (error) {
-        setStorageError(t.storage.loadFailed(errorMessage(error)));
-      }
+      await refreshStorageInfo();
     } catch (error) {
       setDeleteError(t.storage.deleteFailed(errorMessage(error)));
     } finally {
@@ -418,7 +425,7 @@ export function SettingsView({
 
       <SettingsSection icon={HardDrive} title={t.storage.title}>
         <p className="text-sm text-muted-foreground">{t.storage.body}</p>
-        {storageLoading ? (
+        {storageLoading && !storageInfo ? (
           <Skeleton role="status" aria-label={t.storage.loading} className="h-8 w-full" />
         ) : storageInfo ? (
           <>
@@ -465,12 +472,30 @@ export function SettingsView({
             />
           </>
         ) : (
-          <p role="alert" className="text-sm text-destructive">
-            {t.storage.loadFailed(storageError ?? "unknown error")}
-          </p>
+          <div className="flex flex-col items-start gap-2">
+            <p role="alert" className="text-sm text-destructive">
+              {t.storage.loadFailed(storageError ?? "unknown error")}
+            </p>
+            <Button
+              variant="outline"
+              onClick={() => void refreshStorageInfo()}
+              disabled={storageLoading}
+            >
+              {t.storage.retry}
+            </Button>
+          </div>
         )}
         {storageError && storageInfo && (
-          <p role="alert" className="text-sm text-destructive">{storageError}</p>
+          <div className="flex flex-col items-start gap-2">
+            <p role="alert" className="text-sm text-destructive">{storageError}</p>
+            <Button
+              variant="outline"
+              onClick={() => void refreshStorageInfo()}
+              disabled={storageLoading || storageSaving}
+            >
+              {t.storage.retry}
+            </Button>
+          </div>
         )}
       </SettingsSection>
 
