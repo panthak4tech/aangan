@@ -4,6 +4,8 @@ import { scanHardware } from "@/api/api";
 import type { HardwareProfile, Recommendation } from "@/api/types";
 import { TooltipProvider } from "@/components/primitives/tooltip";
 import { ToastProvider } from "@/components/ui/toast-provider";
+import { DownloadsButton, DownloadsDrawer } from "./downloads/DownloadsDrawer";
+import { DownloadsProvider, useDownloads } from "../downloads/useDownloads";
 import { en } from "@/i18n/en";
 import { DevPresetSwitch } from "./DevPresetSwitch";
 import { NavRail, type View } from "./NavRail";
@@ -15,6 +17,14 @@ import { FirstRunWizard } from "./wizard/FirstRunWizard";
 import { NetworkStatusChip } from "./NetworkStatusChip";
 
 export function AppShell() {
+  return (
+    <DownloadsProvider>
+      <AppShellContent />
+    </DownloadsProvider>
+  );
+}
+
+function AppShellContent() {
   const [view, setView] = useState<View>("scan");
   // React state only: the wizard reappears on every app start for now.
   const [onboarded, setOnboarded] = useState(false);
@@ -24,6 +34,8 @@ export function AppShell() {
   const [scanError, setScanError] = useState(false);
   const [selected, setSelected] = useState<Recommendation | null>(null);
   const [networkActivityOpen, setNetworkActivityOpen] = useState(false);
+  const [downloadsOpen, setDownloadsOpen] = useState(false);
+  const downloads = useDownloads();
 
   const changeView = (nextView: View) => {
     setView(nextView);
@@ -66,6 +78,9 @@ export function AppShell() {
                   canViewActivity={onboarded}
                   onShowActivity={openNetworkActivity}
                 />
+                {onboarded && profile && (
+                  <DownloadsButton onClick={() => setDownloadsOpen(true)} />
+                )}
                 <DevPresetSwitch />
               </div>
             </header>
@@ -90,6 +105,7 @@ export function AppShell() {
                       <SettingsView
                         openNetworkActivity={networkActivityOpen}
                         onCloseNetworkActivity={() => setNetworkActivityOpen(false)}
+                        onDownloadDeleted={downloads.forget}
                       />
                     )}
                   </>
@@ -97,6 +113,13 @@ export function AppShell() {
               </div>
             </main>
             <ModelDetailDialog rec={selected} profile={profile} onClose={() => setSelected(null)} />
+            {profile && (
+              <DownloadsDrawer
+                open={downloadsOpen}
+                onOpenChange={setDownloadsOpen}
+                profile={profile}
+              />
+            )}
           </div>
         </div>
       </TooltipProvider>

@@ -1,6 +1,6 @@
 # Aangan
 
-Find out which open AI models your PC can run, and how fast, before you download anything.
+Find out which open AI models your PC can run, and how fast, before choosing one to download.
 
 > Status: desktop app and CLI v0.4.0. Windows first. Offline by default: your
 > hardware details never leave your PC. The optional **Refresh catalog** action
@@ -42,6 +42,19 @@ Release installers are built from this repository by GitHub Actions. See
 In the desktop app, choose **Settings → Appearance** to follow Windows or select
 Light or Dark mode.
 
+## Downloading models
+
+Model files are downloaded only after you select **Download** for a fitting
+recommendation. Downloads use the curated catalog's file URL and are checked
+against its expected size and SHA-256 before being marked complete. Transfers
+can be paused and resumed; **Offline mode** blocks and cancels in-progress
+network requests.
+
+Choose the destination in **Settings → Model storage**. Aangan keeps track of
+previously selected model folders so their files remain visible and manageable
+after you change the destination. You can open folders or delete model and
+incomplete files there. Model weights retain their publishers' licenses.
+
 Speeds are **estimates** from published formulas in [docs/estimation.md](docs/estimation.md); real measured benchmarks are on the roadmap.
 
 ## Help wanted
@@ -49,7 +62,7 @@ Speeds are **estimates** from published formulas in [docs/estimation.md](docs/es
 - Run `aangan scan --json` and file a **Hardware report**.
 - The CLI's bundled catalog is `catalog/models.json`.
 - The desktop's bundled and refreshable catalog is `catalog/models.v1.json`; see `catalog/schema.v1.json`.
-- In the desktop app, open **Models → Refresh catalog** to check Aangan's curated catalog hosted on GitHub. Refresh does not search Hugging Face or download model weights. The bundled desktop catalog currently contains seven Qwen2.5 sizes; adding models requires curating their metadata in `catalog/models.v1.json`.
+- In the desktop app, open **Models → Refresh catalog** to check Aangan's curated catalog hosted on GitHub. Refresh does not search Hugging Face or download model weights; selecting a model's **Download** button is a separate, user-initiated action. The bundled desktop catalog currently contains seven Qwen2.5 sizes; adding models requires curating their metadata in `catalog/models.v1.json`.
 - Add test fixtures in `fixtures/profiles/`.
 
 License: MIT. Model weights keep their own licenses.
