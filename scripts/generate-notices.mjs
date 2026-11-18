@@ -29,6 +29,15 @@ const fontNames = new Map([
   ["@fontsource-variable/jetbrains-mono", "JetBrains Mono"],
   ["@fontsource-variable/noto-sans-devanagari", "Noto Sans Devanagari"],
 ]);
+const javascriptLicenseFileOverrides = new Map([
+  [
+    "@napi-rs/wasm-runtime",
+    {
+      license: "MIT",
+      file: path.join(repositoryRoot, "scripts", "licenses", "napi-rs-MIT.txt"),
+    },
+  ],
+]);
 
 export const NOTICES_OUT_OF_DATE_MESSAGE =
   "THIRD_PARTY_NOTICES.md is out of date. Run `npm run notices` in apps/desktop and commit.";
@@ -136,6 +145,7 @@ function main() {
           aanganPackage.name,
           fontNames,
           (licenseFile) => readFileSync(licenseFile, "utf8"),
+          javascriptLicenseFileOverrides,
         ),
       ),
     );
