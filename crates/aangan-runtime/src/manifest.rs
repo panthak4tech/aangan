@@ -1,5 +1,6 @@
 use crate::variant::Variant;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RuntimeFile {
@@ -39,18 +40,51 @@ fn is_hex64(s: &str) -> bool {
     s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
+fn is_safe_component(value: &str) -> bool {
+    !value.is_empty()
+        && value != "."
+        && value != ".."
+        && !value.contains("..")
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
 pub fn validate(m: &RuntimeManifest) -> Result<(), String> {
     if m.schema != 1 {
         return Err(format!("unsupported manifest schema {}", m.schema));
     }
+    if m.generated_at.len() != 20
+        || !m.generated_at.ends_with('Z')
+        || !m
+            .generated_at
+            .bytes()
+            .enumerate()
+            .all(|(index, byte)| match index {
+                4 | 7 => byte == b'-',
+                10 => byte == b'T',
+                13 | 16 => byte == b':',
+                19 => byte == b'Z',
+                _ => byte.is_ascii_digit(),
+            })
+    {
+        return Err("manifest generated_at must be a UTC timestamp ending in Z".into());
+    }
+    let mut runtime_ids = BTreeSet::new();
     for r in &m.runtimes {
-        if r.id.is_empty() || r.version.is_empty() {
-            return Err("runtime without id or version".into());
+        if !is_safe_component(&r.id) || !is_safe_component(&r.version) || !runtime_ids.insert(&r.id)
+        {
+            return Err(format!("runtime id or version is invalid: {}", r.id));
         }
+        let mut variant_ids = BTreeSet::new();
         for v in &r.variants {
-            if v.files.is_empty()
+            if !is_safe_component(&v.meta.variant)
+                || !variant_ids.insert(&v.meta.variant)
+                || v.files.is_empty()
                 || v.server_exe.contains("..")
                 || v.server_exe.starts_with('/')
+                || v.server_exe.starts_with('\\')
+                || v.server_exe.contains('\\')
                 || v.server_exe.contains(':')
             {
                 return Err(format!("bad variant {}", v.meta.variant));
@@ -95,5 +129,21 @@ mod tests {
         assert!(validate(&sample("zz", "https://github.com/x/y.zip")).is_err());
         let sha = "a".repeat(64);
         assert!(validate(&sample(&sha, "http://github.com/x/y.zip")).is_err());
+    }
+
+    #[test]
+    fn rejects_path_components_and_invalid_timestamps() {
+        let sha = "a".repeat(64);
+        let mut manifest = sample(&sha, "https://github.com/x/y.zip");
+        manifest.runtimes[0].id = "../outside".into();
+        assert!(validate(&manifest).is_err());
+
+        let mut manifest = sample(&sha, "https://github.com/x/y.zip");
+        manifest.runtimes[0].variants[0].server_exe = "..\\outside.exe".into();
+        assert!(validate(&manifest).is_err());
+
+        let mut manifest = sample(&sha, "https://github.com/x/y.zip");
+        manifest.generated_at = "not-a-time".into();
+        assert!(validate(&manifest).is_err());
     }
 }
