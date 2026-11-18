@@ -7,6 +7,7 @@ import {
   checkNoticesFile,
   NOTICES_OUT_OF_DATE_MESSAGE,
 } from "./generate-notices.mjs";
+import { javascriptNotices } from "./notices-data.mjs";
 
 function withNoticesFile(contents, run) {
   const directory = mkdtempSync(path.join(os.tmpdir(), "aangan-notices-test-"));
@@ -52,4 +53,58 @@ test("notices check reports stale content and returns failure without modifying 
     assert.deepEqual(errors, [NOTICES_OUT_OF_DATE_MESSAGE]);
     assert.equal(readFileSync(filePath, "utf8"), committed);
   });
+});
+
+test("javascript notices use a matching checked-in license override", () => {
+  const licenseText = "MIT License\n\nCopyright (c) 2020-present LongYinan";
+  const notices = javascriptNotices(
+    {
+      "@napi-rs/wasm-runtime@1.2.2": {
+        licenses: "MIT",
+        repository: "https://github.com/napi-rs/napi-rs",
+      },
+    },
+    "desktop",
+    new Map(),
+    (filePath) => {
+      assert.equal(filePath, "napi-rs-MIT.txt");
+      return licenseText;
+    },
+    new Map([
+      [
+        "@napi-rs/wasm-runtime",
+        { license: "MIT", file: "napi-rs-MIT.txt" },
+      ],
+    ]),
+  );
+
+  assert.deepEqual(notices, [
+    {
+      name: "@napi-rs/wasm-runtime",
+      version: "1.2.2",
+      license: "MIT",
+      repository: "https://github.com/napi-rs/napi-rs",
+      text: licenseText,
+    },
+  ]);
+});
+
+test("javascript notices reject an override when the declared license differs", () => {
+  assert.throws(
+    () => javascriptNotices(
+      {
+        "@napi-rs/wasm-runtime@1.2.2": {
+          licenses: "Apache-2.0",
+          repository: "https://github.com/napi-rs/napi-rs",
+        },
+      },
+      "desktop",
+      new Map(),
+      () => assert.fail("mismatched license text must not be read"),
+      new Map([
+        ["@napi-rs/wasm-runtime", { license: "MIT", file: "napi-rs-MIT.txt" }],
+      ]),
+    ),
+    /No license file found for JavaScript dependency @napi-rs\/wasm-runtime@1\.2\.2/,
+  );
 });
