@@ -74,15 +74,24 @@ export function renderMarkdown(notices) {
   ].join("\n");
 }
 
-export function javascriptNotices(licenseData, projectPackageName, fontNames, readLicenseText) {
+export function javascriptNotices(
+  licenseData,
+  projectPackageName,
+  fontNames,
+  readLicenseText,
+  licenseFileOverrides = new Map(),
+) {
   return Object.entries(licenseData).flatMap(([packageKey, metadata]) => {
     const separator = packageKey.lastIndexOf("@");
     const packageName = separator > 0 ? packageKey.slice(0, separator) : packageKey;
     if (packageName === projectPackageName || packageName === "desktop") return [];
-    if (!metadata.licenseFile) {
+    const override = licenseFileOverrides.get(packageName);
+    const licenseFile = metadata.licenseFile
+      ?? (override?.license === metadata.licenses ? override.file : undefined);
+    if (!licenseFile) {
       throw new Error(`No license file found for JavaScript dependency ${packageKey}`);
     }
-    const text = normalizeLicenseText(readLicenseText(metadata.licenseFile));
+    const text = normalizeLicenseText(readLicenseText(licenseFile));
     if (!text) throw new Error(`Empty license file for JavaScript dependency ${packageKey}`);
     return [{
       name: fontNames.get(packageName) ?? packageName,
