@@ -15,6 +15,7 @@ import { SettingsView } from "./views/SettingsView";
 import { ModelDetailDialog } from "./models/ModelDetailDialog";
 import { FirstRunWizard } from "./wizard/FirstRunWizard";
 import { NetworkStatusChip } from "./NetworkStatusChip";
+import { RuntimesView } from "./views/RuntimesView";
 
 export function AppShell() {
   return (
@@ -101,6 +102,7 @@ function AppShellContent() {
                       <ScanView profile={profile} scanning={scanning} scanError={scanError} onRescan={rescan} />
                     )}
                     {view === "models" && <ModelsView profile={profile} onOpenModel={setSelected} />}
+                    {view === "runtimes" && <RuntimesView />}
                     {view === "settings" && (
                       <SettingsView
                         openNetworkActivity={networkActivityOpen}

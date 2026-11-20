@@ -50,29 +50,57 @@ fn is_safe_component(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
+fn valid_timestamp(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.len() != 20
+        || !bytes.iter().enumerate().all(|(index, byte)| match index {
+            4 | 7 => *byte == b'-',
+            10 => *byte == b'T',
+            13 | 16 => *byte == b':',
+            19 => *byte == b'Z',
+            _ => byte.is_ascii_digit(),
+        })
+    {
+        return false;
+    }
+    let parse =
+        |range: std::ops::Range<usize>| value.get(range).and_then(|part| part.parse::<u32>().ok());
+    let (Some(year), Some(month), Some(day), Some(hour), Some(minute), Some(second)) = (
+        parse(0..4),
+        parse(5..7),
+        parse(8..10),
+        parse(11..13),
+        parse(14..16),
+        parse(17..19),
+    ) else {
+        return false;
+    };
+    if year < 1970 || !(1..=12).contains(&month) || hour > 23 || minute > 59 || second > 59 {
+        return false;
+    }
+    let leap_year = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days_in_month = match month {
+        2 if leap_year => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    };
+    (1..=days_in_month).contains(&day)
+}
+
 pub fn validate(m: &RuntimeManifest) -> Result<(), String> {
     if m.schema != 1 {
         return Err(format!("unsupported manifest schema {}", m.schema));
     }
-    if m.generated_at.len() != 20
-        || !m.generated_at.ends_with('Z')
-        || !m
-            .generated_at
-            .bytes()
-            .enumerate()
-            .all(|(index, byte)| match index {
-                4 | 7 => byte == b'-',
-                10 => byte == b'T',
-                13 | 16 => byte == b':',
-                19 => byte == b'Z',
-                _ => byte.is_ascii_digit(),
-            })
-    {
+    if !valid_timestamp(&m.generated_at) {
         return Err("manifest generated_at must be a UTC timestamp ending in Z".into());
     }
     let mut runtime_ids = BTreeSet::new();
     for r in &m.runtimes {
-        if !is_safe_component(&r.id) || !is_safe_component(&r.version) || !runtime_ids.insert(&r.id)
+        if !is_safe_component(&r.id)
+            || !is_safe_component(&r.version)
+            || r.id == "_downloads"
+            || !runtime_ids.insert(&r.id)
         {
             return Err(format!("runtime id or version is invalid: {}", r.id));
         }
@@ -86,6 +114,9 @@ pub fn validate(m: &RuntimeManifest) -> Result<(), String> {
                 || v.server_exe.starts_with('\\')
                 || v.server_exe.contains('\\')
                 || v.server_exe.contains(':')
+                || v.server_exe
+                    .split('/')
+                    .any(|component| !is_safe_component(component))
             {
                 return Err(format!("bad variant {}", v.meta.variant));
             }
@@ -144,6 +175,14 @@ mod tests {
 
         let mut manifest = sample(&sha, "https://github.com/x/y.zip");
         manifest.generated_at = "not-a-time".into();
+        assert!(validate(&manifest).is_err());
+
+        let mut manifest = sample(&sha, "https://github.com/x/y.zip");
+        manifest.generated_at = "2026-02-29T00:00:00Z".into();
+        assert!(validate(&manifest).is_err());
+
+        let mut manifest = sample(&sha, "https://github.com/x/y.zip");
+        manifest.runtimes[0].variants[0].server_exe = "bin//llama-server.exe".into();
         assert!(validate(&manifest).is_err());
     }
 }

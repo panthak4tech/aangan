@@ -61,6 +61,29 @@ Catalog JSON and signature files use LF bytes. `.gitattributes` disables line
 ending conversion for the catalog files and test fixtures; do not rewrite a
 signed file with a tool that changes its bytes after signing.
 
+## Signing a runtime manifest
+
+The weekly runtime workflow only proposes a new `catalog/runtimes.v1.json`;
+it never signs or merges a candidate. Before signing, install the candidate on
+a Windows PC and test the llama.cpp build locally. Then sign it with the same
+trusted key:
+
+```powershell
+python tools/runtimes/build_runtimes.py --tag bNNNN
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/catalog/sign.ps1 `
+  -File catalog/runtimes.v1.json
+```
+
+The generator selects the Windows x64 CPU and Vulkan archives and every CUDA
+version published with its matching `cudart` archive. It downloads each asset
+to calculate SHA-256 and size itself, and rejects a mismatch with any digest
+published by GitHub. CUDA requirements use the NVML CUDA driver integer:
+`major * 1000 + minor * 10` (for example, CUDA 12.4 maps to `12040`, and CUDA
+13.1 maps to `13010`). A runtime update PR is not mergeable until the build has
+been tested, the manifest has been signed with the command above, and the
+resulting `.minisig` has been pushed. The app verifies the signature before
+caching or using a refreshed manifest.
+
 ## Lost keys and rotation
 
 If the primary key is lost, sign with the offline backup key. The app already

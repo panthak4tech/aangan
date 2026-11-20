@@ -12,6 +12,7 @@ from build_runtimes import (
     asset_metadata,
     build_manifest,
     cuda_driver_version,
+    fetch_release,
     select_assets,
 )
 
@@ -35,12 +36,19 @@ class FakeResponse:
     def iter_content(self, chunk_size: int):
         yield self.content[:chunk_size]
 
+    def json(self) -> dict | list:
+        return json.loads(self.content.decode("utf-8"))
+
 
 class FakeSession:
-    def __init__(self, content: bytes):
+    def __init__(self, content: bytes = b"fixture", responses: dict[str, object] | None = None):
         self.content = content
+        self.responses = responses or {}
 
-    def get(self, *_: object, **__: object) -> FakeResponse:
+    def get(self, url: str, **__: object) -> FakeResponse:
+        if url in self.responses:
+            payload = json.dumps(self.responses[url]).encode("utf-8")
+            return FakeResponse(payload)
         return FakeResponse(self.content)
 
 
@@ -55,6 +63,20 @@ def test_select_assets_includes_cpu_vulkan_and_multiple_cuda_versions() -> None:
     assert list(selected["cuda"]) == ["12.4", "13.1"]
     assert selected["cuda"]["12.4"][1]["name"] == "cudart-llama-bin-win-cuda-12.4-x64.zip"
 
+
+def test_latest_discovery_skips_non_binary_latest_release() -> None:
+    latest = {"tag_name": "v1.0.0", "assets": [{"name": "nightly-tag.txt"}]}
+    releases = [latest, recorded_release()]
+    session = FakeSession(
+        responses={
+            "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest": latest,
+            "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=100": releases,
+        }
+    )
+
+    selected = select_assets(fetch_release(None, session))  # type: ignore[arg-type]
+
+    assert selected["tag"] == "b1234"
 
 @pytest.mark.parametrize(("version", "expected"), [("12.4", 12040), ("13.1", 13010)])
 def test_cuda_version_maps_to_minimum_driver(version: str, expected: int) -> None:

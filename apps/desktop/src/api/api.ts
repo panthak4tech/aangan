@@ -13,6 +13,8 @@ import type {
   NetworkActivity,
   NetworkState,
   Recommendation,
+  RuntimeCatalog,
+  RuntimeInstallResult,
   StorageInfo,
 } from "./types";
 
@@ -126,6 +128,57 @@ export async function listenDownloadProgress(
 ): Promise<UnlistenFn> {
   if (!inTauri) return () => {};
   return listen<DownloadProgress>("downloads://progress", (event) => onProgress(event.payload));
+}
+
+export async function listRuntimes(): Promise<RuntimeCatalog> {
+  if (!inTauri) {
+    return {
+      generatedAt: "2026-11-18T00:00:00Z",
+      signatureVerified: false,
+      warning: null,
+      defaultRuntime: null,
+      runtimes: [],
+    };
+  }
+  return invoke<RuntimeCatalog>("runtimes_list");
+}
+
+export async function checkRuntimeUpdates(): Promise<RuntimeCatalog> {
+  if (!inTauri) throw new Error("Runtime updates are available only in the desktop app.");
+  return invoke<RuntimeCatalog>("runtime_check_updates");
+}
+
+export async function installRuntime(
+  runtimeId: string,
+  variant: string,
+): Promise<RuntimeInstallResult> {
+  if (!inTauri) throw new Error("Runtime installation is available only in the desktop app.");
+  return invoke<RuntimeInstallResult>("runtime_install", { runtimeId, variant });
+}
+
+export async function removeRuntime(
+  runtimeId: string,
+  version: string,
+  variant: string,
+): Promise<void> {
+  if (!inTauri) throw new Error("Runtime management is available only in the desktop app.");
+  return invoke<void>("runtime_remove", { runtimeId, version, variant });
+}
+
+export async function setDefaultRuntime(
+  runtimeId: string,
+  version: string,
+  variant: string,
+): Promise<void> {
+  if (!inTauri) throw new Error("Runtime management is available only in the desktop app.");
+  return invoke<void>("runtime_set_default", { runtimeId, version, variant });
+}
+
+export async function listenRuntimeProgress(
+  onProgress: (progress: DownloadProgress) => void,
+): Promise<UnlistenFn> {
+  if (!inTauri) return () => {};
+  return listen<DownloadProgress>("runtimes://progress", (event) => onProgress(event.payload));
 }
 
 export async function startDownload(

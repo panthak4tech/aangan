@@ -25,13 +25,21 @@ import {
   openNetworkDocs as openNetworkDocsCommand,
   openModelFileFolder,
   openModelFolder,
+  removeRuntime,
   resetCatalog,
   setCatalogRefreshConsent,
   setOfflineMode,
   setModelFolder,
   setSubscribedFamilies,
 } from "@/api/api";
-import type { AppPaths, CatalogInfo, NetworkState, StorageFile, StorageInfo } from "@/api/types";
+import type {
+  AppPaths,
+  CatalogInfo,
+  NetworkState,
+  RuntimeStorageEntry,
+  StorageFile,
+  StorageInfo,
+} from "@/api/types";
 import { SpecRow } from "@/components/aangan/SystemSpecCard";
 import { Badge } from "@/components/primitives/badge";
 import { Button } from "@/components/primitives/button";
@@ -111,6 +119,9 @@ export function SettingsView({
   const [deletingFile, setDeletingFile] = useState<StorageFile | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deletingRuntime, setDeletingRuntime] = useState<RuntimeStorageEntry | null>(null);
+  const [removingRuntime, setRemovingRuntime] = useState(false);
+  const [runtimeRemoveError, setRuntimeRemoveError] = useState<string | null>(null);
   const storageInfoRequest = useRef(0);
   const toast = useToast();
 
@@ -304,6 +315,25 @@ export function SettingsView({
     }
   };
 
+  const confirmRemoveRuntime = async () => {
+    if (!deletingRuntime) return;
+    setRemovingRuntime(true);
+    setRuntimeRemoveError(null);
+    try {
+      await removeRuntime(
+        deletingRuntime.runtimeId,
+        deletingRuntime.version,
+        deletingRuntime.variant,
+      );
+      setDeletingRuntime(null);
+      await refreshStorageInfo();
+    } catch (error) {
+      setRuntimeRemoveError(errorMessage(error));
+    } finally {
+      setRemovingRuntime(false);
+    }
+  };
+
   const copyDataPath = async () => {
     if (!appPaths) return;
     setCopyingPath(true);
@@ -479,6 +509,21 @@ export function SettingsView({
               deleteLabel={t.storage.delete}
               revealLabel={t.storage.showInFolder}
             />
+            <RuntimeStorageList
+              title={t.storage.runtimes}
+              empty={t.storage.emptyRuntimes}
+              entries={storageInfo.runtimeInstalls}
+              removeLabel={t.storage.removeRuntime}
+              onRemove={(runtime) => {
+                setRuntimeRemoveError(null);
+                setDeletingRuntime(runtime);
+              }}
+            />
+            {runtimeRemoveError && (
+              <p role="alert" className="text-sm text-destructive">
+                {t.storage.removeRuntimeFailed(runtimeRemoveError)}
+              </p>
+            )}
           </>
         ) : (
           <div className="flex flex-col items-start gap-2">
@@ -641,6 +686,47 @@ export function SettingsView({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <Dialog
+        open={deletingRuntime !== null}
+        onOpenChange={(open) => {
+          if (!open && !removingRuntime) setDeletingRuntime(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t.storage.removeRuntimeTitle}</DialogTitle>
+            <DialogDescription>
+              {deletingRuntime
+                ? t.storage.removeRuntimeDescription(
+                  deletingRuntime.version,
+                  deletingRuntime.variant,
+                )
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+          {runtimeRemoveError && (
+            <p role="alert" className="text-sm text-destructive">
+              {t.storage.removeRuntimeFailed(runtimeRemoveError)}
+            </p>
+          )}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeletingRuntime(null)}
+              disabled={removingRuntime}
+            >
+              {t.storage.cancelDelete}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => void confirmRemoveRuntime()}
+              disabled={removingRuntime}
+            >
+              {t.storage.removeRuntime}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }
@@ -688,6 +774,51 @@ function StorageFileList({
                   {deleteLabel}
                 </Button>
               </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function RuntimeStorageList({
+  title,
+  empty,
+  entries,
+  removeLabel,
+  onRemove,
+}: {
+  title: string;
+  empty: string;
+  entries: RuntimeStorageEntry[];
+  removeLabel: string;
+  onRemove: (runtime: RuntimeStorageEntry) => void;
+}) {
+  return (
+    <section className="flex flex-col gap-2" aria-label={title}>
+      <h3 className="text-sm font-medium text-foreground">{title}</h3>
+      {entries.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{empty}</p>
+      ) : (
+        <ul className="flex flex-col gap-2">
+          {entries.map((runtime) => (
+            <li
+              key={`${runtime.runtimeId}-${runtime.version}-${runtime.variant}`}
+              className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border p-3"
+            >
+              <div className="min-w-0">
+                <p className="text-sm text-foreground">
+                  {runtime.runtimeId} · {runtime.version} · {runtime.variant}
+                </p>
+                <p className="break-all text-xs text-muted-foreground">{runtime.path}</p>
+                <p className="text-xs text-muted-foreground">
+                  {formatTransferSize(runtime.sizeBytes)}
+                </p>
+              </div>
+              <Button variant="outline" size="sm" onClick={() => onRemove(runtime)}>
+                {removeLabel}
+              </Button>
             </li>
           ))}
         </ul>

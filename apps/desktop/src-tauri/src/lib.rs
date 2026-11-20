@@ -11,10 +11,12 @@ use tauri_plugin_opener::OpenerExt;
 
 mod catalog;
 mod downloads;
+mod runtime;
 mod storage;
 
 const MAX_TEXT_FILE_BYTES: usize = 5 * 1024 * 1024;
 const BUNDLED_CATALOG: &str = include_str!("../../../../catalog/models.v1.json");
+const BUNDLED_RUNTIME_MANIFEST: &str = include_str!("../../../../catalog/runtimes.v1.json");
 
 #[derive(Serialize)]
 struct SavedFile {
@@ -154,6 +156,57 @@ async fn refresh_catalog(
     consent_once: bool,
 ) -> Result<catalog::RefreshResult, String> {
     catalog::refresh_catalog(&gate, &app_data_dir(&app)?, BUNDLED_CATALOG, consent_once).await
+}
+
+#[tauri::command]
+fn runtimes_list(app: tauri::AppHandle) -> Result<runtime::RuntimeCatalog, String> {
+    runtime::list(&app_data_dir(&app)?, BUNDLED_RUNTIME_MANIFEST)
+}
+
+#[tauri::command]
+async fn runtime_check_updates(
+    app: tauri::AppHandle,
+    gate: State<'_, Arc<NetGate>>,
+) -> Result<runtime::RuntimeCatalog, String> {
+    runtime::check_updates(&gate, &app_data_dir(&app)?, BUNDLED_RUNTIME_MANIFEST).await
+}
+
+#[tauri::command]
+async fn runtime_install(
+    app: tauri::AppHandle,
+    gate: State<'_, Arc<NetGate>>,
+    runtime_id: String,
+    variant: String,
+) -> Result<runtime::RuntimeInstallResult, String> {
+    runtime::install(
+        &app,
+        &gate,
+        &app_data_dir(&app)?,
+        BUNDLED_RUNTIME_MANIFEST,
+        &runtime_id,
+        &variant,
+    )
+    .await
+}
+
+#[tauri::command]
+fn runtime_remove(
+    app: tauri::AppHandle,
+    runtime_id: String,
+    version: String,
+    variant: String,
+) -> Result<(), String> {
+    runtime::remove(&app_data_dir(&app)?, &runtime_id, &version, &variant)
+}
+
+#[tauri::command]
+fn runtime_set_default(
+    app: tauri::AppHandle,
+    runtime_id: String,
+    version: String,
+    variant: String,
+) -> Result<(), String> {
+    runtime::set_default(&app_data_dir(&app)?, &runtime_id, &version, &variant)
 }
 
 async fn restore_downloads(
@@ -481,6 +534,11 @@ pub fn run() -> Result<(), tauri::Error> {
             set_catalog_refresh_consent,
             reset_catalog,
             refresh_catalog,
+            runtimes_list,
+            runtime_check_updates,
+            runtime_install,
+            runtime_remove,
+            runtime_set_default,
             download_model,
             download_pause,
             download_resume,
@@ -504,6 +562,7 @@ pub fn run() -> Result<(), tauri::Error> {
         ])
         .setup(|app| {
             let data_dir = app_data_dir(app.handle()).map_err(std::io::Error::other)?;
+            runtime::cleanup_stale_tmp(&data_dir).map_err(std::io::Error::other)?;
             let gate = NetGate::new().map_err(std::io::Error::other)?;
             gate.set_offline(catalog::offline_mode(&data_dir).map_err(std::io::Error::other)?)
                 .map_err(std::io::Error::other)?;

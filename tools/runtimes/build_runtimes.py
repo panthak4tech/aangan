@@ -193,7 +193,35 @@ def fetch_release(tag: str | None, session: requests.Session) -> dict[str, Any]:
         raise RuntimeBuildError(f"could not query the llama.cpp release API: {error}") from error
     if not isinstance(release, dict):
         raise RuntimeBuildError("release API returned an invalid response")
-    return release
+    if tag:
+        return release
+    try:
+        select_assets(release)
+        return release
+    except RuntimeBuildError:
+        pass
+
+    try:
+        response = session.get(
+            f"{API_ROOT}?per_page=100",
+            headers={"Accept": "application/vnd.github+json", "User-Agent": USER_AGENT},
+            timeout=(15, 60),
+        )
+        response.raise_for_status()
+        releases = response.json()
+    except (requests.RequestException, ValueError) as error:
+        raise RuntimeBuildError(f"could not list llama.cpp releases: {error}") from error
+    if not isinstance(releases, list):
+        raise RuntimeBuildError("release API returned an invalid release list")
+    for candidate in releases:
+        if not isinstance(candidate, dict):
+            continue
+        try:
+            select_assets(candidate)
+        except RuntimeBuildError:
+            continue
+        return candidate
+    raise RuntimeBuildError("no release in the latest 100 releases has the required Windows x64 assets")
 
 
 def write_manifest(path: Path, manifest: dict[str, Any]) -> None:
