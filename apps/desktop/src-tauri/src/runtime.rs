@@ -1140,4 +1140,23 @@ mod tests {
         assert_eq!(manifest.runtimes[0].id, "llama.cpp");
         assert!(!manifest.runtimes[0].variants.is_empty());
     }
+
+    #[test]
+    fn broken_runtime_manifest_cache_is_removed_without_leaving_install_files() {
+        let data = tempfile::tempdir().unwrap();
+        let cache = data.path().join(RUNTIME_CACHE_FILE);
+        let broken = SignedRuntimeCache {
+            manifest_json: b"{ invalid manifest".to_vec(),
+            signature: "invalid signature".into(),
+        };
+        fs::write(&cache, serde_json::to_vec(&broken).unwrap()).unwrap();
+        let bundled = include_str!("../../../../catalog/runtimes.v1.json");
+
+        let loaded = load_manifest(data.path(), bundled).unwrap();
+
+        assert_eq!(loaded.manifest.runtimes[0].id, "llama.cpp");
+        assert!(loaded.warning.is_some());
+        assert!(!cache.exists());
+        assert!(!data.path().join("runtimes").exists());
+    }
 }
