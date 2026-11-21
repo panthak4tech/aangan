@@ -102,7 +102,7 @@ function AppShellContent() {
                       <ScanView profile={profile} scanning={scanning} scanError={scanError} onRescan={rescan} />
                     )}
                     {view === "models" && <ModelsView profile={profile} onOpenModel={setSelected} />}
-                    {view === "runtimes" && <RuntimesView />}
+                    <RuntimesView active={view === "runtimes"} />
                     {view === "settings" && (
                       <SettingsView
                         openNetworkActivity={networkActivityOpen}

@@ -1009,7 +1009,7 @@ describe("SettingsView and FirstRunWizard", () => {
   });
 
   it("confirms runtime removal from Storage and refreshes the inventory", async () => {
-    vi.mocked(getStorageInfo).mockResolvedValue({
+    const installedInfo = {
       modelFolder: "C:\\models",
       modelFiles: [],
       incompleteDownloads: [],
@@ -1022,12 +1022,21 @@ describe("SettingsView and FirstRunWizard", () => {
       }],
       catalogCacheBytes: 0,
       totalBytes: 1024,
-    });
+    };
+    const removedInfo = {
+      ...installedInfo,
+      runtimeInstalls: [],
+      totalBytes: 0,
+    };
+    vi.mocked(getStorageInfo)
+      .mockResolvedValueOnce(installedInfo)
+      .mockResolvedValueOnce(removedInfo);
     render(<ToastProvider><SettingsView /></ToastProvider>);
 
-    const runtimeRow = (await screen.findByText(
+    const runtimeText = await screen.findByText(
       "llama.cpp · b12503 · cuda-12.4",
-    )).closest("li");
+    );
+    const runtimeRow = runtimeText.closest("li");
     if (!runtimeRow) throw new Error("Expected the runtime Storage row.");
     fireEvent.click(within(runtimeRow).getByRole("button", {
       name: en.views.settings.storage.removeRuntime,
@@ -1048,6 +1057,9 @@ describe("SettingsView and FirstRunWizard", () => {
       );
       expect(getStorageInfo).toHaveBeenCalledTimes(2);
     });
+    expect(screen.queryByText("llama.cpp · b12503 · cuda-12.4")).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByText(en.views.settings.storage.total("0 B"))).toBeInTheDocument();
   });
 
   it("renders the real data path and supports open and copy actions", async () => {

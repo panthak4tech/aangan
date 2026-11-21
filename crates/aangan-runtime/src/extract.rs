@@ -49,6 +49,14 @@ pub fn extract_zip_safely(
         if copied != size {
             return Err("archive entry is truncated".into());
         }
+        let mut extra = [0; 1];
+        if entry
+            .read(&mut extra)
+            .map_err(|error| format!("could not validate archive entry: {error}"))?
+            != 0
+        {
+            return Err("archive entry exceeds its declared size".into());
+        }
     }
     Ok(())
 }
@@ -77,6 +85,70 @@ mod tests {
         extract_zip_safely(&z, &out, &RUNTIME_LIMITS).unwrap();
         assert!(out.join("llama-server.exe").exists());
         assert!(out.join("sub/dll.dll").exists());
+    }
+
+    #[test]
+    fn extracts_directory_entries() {
+        let d = tempfile::tempdir().unwrap();
+        let z = d.path().join("directory.zip");
+        let mut writer = ZipWriter::new(fs::File::create(&z).unwrap());
+        writer
+            .add_directory("folder/", SimpleFileOptions::default())
+            .unwrap();
+        writer
+            .start_file("folder/file.txt", SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(b"contents").unwrap();
+        writer.finish().unwrap();
+
+        let out = d.path().join("out");
+        extract_zip_safely(&z, &out, &RUNTIME_LIMITS).unwrap();
+        assert!(out.join("folder").is_dir());
+        assert_eq!(fs::read(out.join("folder/file.txt")).unwrap(), b"contents");
+    }
+
+    #[test]
+    fn rejects_bad_crc_after_extracting_a_previous_entry() {
+        let d = tempfile::tempdir().unwrap();
+        let z = d.path().join("bad-crc.zip");
+        make_zip(&z, &[("first.txt", b"first"), ("second.txt", b"second")]);
+        let mut bytes = fs::read(&z).unwrap();
+        let central_header = bytes
+            .windows(4)
+            .rposition(|window| window == b"PK\x01\x02")
+            .unwrap();
+        bytes[central_header + 16] ^= 0xff;
+        fs::write(&z, bytes).unwrap();
+
+        let out = d.path().join("out");
+        assert!(extract_zip_safely(&z, &out, &RUNTIME_LIMITS).is_err());
+        assert_eq!(fs::read(out.join("first.txt")).unwrap(), b"first");
+    }
+
+    #[test]
+    fn rejects_an_entry_shorter_than_its_declared_size_after_partial_extraction() {
+        let d = tempfile::tempdir().unwrap();
+        let z = d.path().join("truncated.zip");
+        make_zip(&z, &[("first.txt", b"first"), ("second.txt", b"second")]);
+        let mut bytes = fs::read(&z).unwrap();
+        let central_headers = bytes
+            .windows(4)
+            .enumerate()
+            .filter_map(|(index, window)| (window == b"PK\x01\x02").then_some(index))
+            .collect::<Vec<_>>();
+        let second_header = *central_headers.last().unwrap();
+        let declared_size = u32::from_le_bytes(
+            bytes[second_header + 24..second_header + 28]
+                .try_into()
+                .unwrap(),
+        );
+        bytes[second_header + 24..second_header + 28]
+            .copy_from_slice(&(declared_size + 1).to_le_bytes());
+        fs::write(&z, bytes).unwrap();
+
+        let out = d.path().join("out");
+        assert!(extract_zip_safely(&z, &out, &RUNTIME_LIMITS).is_err());
+        assert_eq!(fs::read(out.join("first.txt")).unwrap(), b"first");
     }
 
     #[test]

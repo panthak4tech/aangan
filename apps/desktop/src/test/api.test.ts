@@ -130,6 +130,22 @@ describe("browser API wrappers", () => {
     expect(invoke).toHaveBeenCalledWith("get_app_paths");
   });
 
+  it("binds runtime installation requests to the displayed version", async () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    const { installRuntime } = await import("@/api/api");
+
+    await installRuntime("llama.cpp", "b1234", "cpu");
+
+    expect(invoke).toHaveBeenCalledWith("runtime_install", {
+      runtimeId: "llama.cpp",
+      version: "b1234",
+      variant: "cpu",
+    });
+  });
+
   it("opens the bundled third-party notices through Tauri", async () => {
     const { openThirdPartyNotices } = await import("@/api/api");
 

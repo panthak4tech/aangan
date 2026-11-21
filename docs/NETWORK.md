@@ -30,8 +30,9 @@ does not allow arbitrary lookalike domains.
 
 The chip and activity log cover Aangan's gated requests only; they are not a
 system-wide network monitor and do not report other applications' traffic.
-Local connections to a runtime do not appear in this log. Runtime process
-launch and loopback-only controls are handled by the process supervisor.
+Local connections to a runtime do not appear in this log. Aangan does not
+currently supervise runtime processes or enforce loopback-only runtime
+bindings.
 
 The **Network access details** link in Settings opens this document in the
 system browser. That browser request happens only after the user selects the

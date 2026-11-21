@@ -98,10 +98,28 @@ mod tests {
             has_discrete_gpu: true,
         };
         assert_eq!(name(pick_variant(&o, &hw)), "vulkan");
-        let hw = HwFacts {
-            nvidia_cuda_driver: None,
+        let cpu_only = vec![o[0].clone()];
+        assert_eq!(name(pick_variant(&cpu_only, &hw)), "cpu");
+        assert_eq!(name(pick_variant(&[], &hw)), "none");
+    }
+
+    #[test]
+    fn cuda_requires_a_supported_driver_and_accepts_the_exact_threshold() {
+        let o = offered();
+        let exact_driver = HwFacts {
+            nvidia_cuda_driver: Some(12040),
             has_discrete_gpu: false,
         };
-        assert_eq!(name(pick_variant(&o, &hw)), "cpu");
+        assert_eq!(name(pick_variant(&o, &exact_driver)), "cuda-12.4");
+
+        let no_cuda_requirement = vec![Variant {
+            variant: "cuda-unknown".into(),
+            kind: Kind::Cuda,
+            requires_cuda_driver: None,
+        }];
+        assert_eq!(
+            name(pick_variant(&no_cuda_requirement, &exact_driver)),
+            "none"
+        );
     }
 }

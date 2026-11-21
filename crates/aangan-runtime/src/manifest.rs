@@ -107,6 +107,7 @@ pub fn validate(m: &RuntimeManifest) -> Result<(), String> {
         let mut variant_ids = BTreeSet::new();
         for v in &r.variants {
             if !is_safe_component(&v.meta.variant)
+                || v.meta.variant.ends_with(".tmp")
                 || !variant_ids.insert(&v.meta.variant)
                 || v.files.is_empty()
                 || v.server_exe.contains("..")
@@ -184,5 +185,46 @@ mod tests {
         let mut manifest = sample(&sha, "https://github.com/x/y.zip");
         manifest.runtimes[0].variants[0].server_exe = "bin//llama-server.exe".into();
         assert!(validate(&manifest).is_err());
+    }
+
+    #[test]
+    fn rejects_invalid_manifest_entries_independently() {
+        let sha = "a".repeat(64);
+        let valid = sample(&sha, "https://github.com/x/y.zip");
+
+        let mut unsupported_schema = valid.clone();
+        unsupported_schema.schema = 2;
+
+        let mut duplicate_runtime = valid.clone();
+        duplicate_runtime.runtimes.push(valid.runtimes[0].clone());
+
+        let mut duplicate_variant = valid.clone();
+        duplicate_variant.runtimes[0]
+            .variants
+            .push(valid.runtimes[0].variants[0].clone());
+
+        let mut reserved_runtime_id = valid.clone();
+        reserved_runtime_id.runtimes[0].id = "_downloads".into();
+
+        let mut reserved_variant_suffix = valid.clone();
+        reserved_variant_suffix.runtimes[0].variants[0].meta.variant = "cpu.tmp".into();
+
+        let mut empty_files = valid.clone();
+        empty_files.runtimes[0].variants[0].files.clear();
+
+        let mut zero_size = valid;
+        zero_size.runtimes[0].variants[0].files[0].size_bytes = 0;
+
+        for (case, manifest) in [
+            ("unsupported schema", unsupported_schema),
+            ("duplicate runtime id", duplicate_runtime),
+            ("duplicate variant id", duplicate_variant),
+            ("reserved runtime id", reserved_runtime_id),
+            ("reserved temporary suffix", reserved_variant_suffix),
+            ("empty files", empty_files),
+            ("zero file size", zero_size),
+        ] {
+            assert!(validate(&manifest).is_err(), "{case} should be rejected");
+        }
     }
 }

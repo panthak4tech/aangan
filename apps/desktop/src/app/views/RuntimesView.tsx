@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   checkRuntimeUpdates,
   getNetworkState,
@@ -37,50 +37,63 @@ type RemoveTarget = {
   variant: string;
 };
 
-export function RuntimesView() {
+export function RuntimesView({ active = true }: { active?: boolean }) {
   const t = en.views.runtimes;
   const [catalog, setCatalog] = useState<RuntimeCatalog | null>(null);
   const [network, setNetwork] = useState<NetworkState | null>(null);
   const [loading, setLoading] = useState(true);
   const [checking, setChecking] = useState(false);
-  const [installing, setInstalling] = useState<string | null>(null);
+  const [installing, setInstalling] = useState<Record<string, boolean>>({});
   const [progress, setProgress] = useState<Record<string, DownloadProgress>>({});
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [selectedVariants, setSelectedVariants] = useState<Record<string, string>>({});
   const [removeTarget, setRemoveTarget] = useState<RemoveTarget | null>(null);
+  const [removeError, setRemoveError] = useState<string | null>(null);
   const [removing, setRemoving] = useState(false);
 
-  const refresh = async () => {
-    setError(null);
+  const refresh = useCallback(async (clearMessages = true) => {
+    if (clearMessages) {
+      setError(null);
+      setNotice(null);
+    }
     try {
-      setCatalog(await listRuntimes());
+      const next = await listRuntimes();
+      setCatalog(next);
+      setProgress((current) => pruneCompletedProgress(current, next));
     } catch (reason) {
       setError(errorMessage(reason));
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     let mounted = true;
     let stopListening: (() => void) | undefined;
     let stopNetworkListening: (() => void) | undefined;
-    void listRuntimes()
-      .then((value) => mounted && setCatalog(value))
-      .catch((reason: unknown) => mounted && setError(errorMessage(reason)))
-      .finally(() => mounted && setLoading(false));
-    void getNetworkState()
-      .then((value) => mounted && setNetwork(value))
-      .catch((reason: unknown) => mounted && setError(errorMessage(reason)));
-    void listenNetworkState((value) => mounted && setNetwork(value))
-      .then((unlisten) => {
+    let networkEventReceived = false;
+    void (async () => {
+      try {
+        const unlisten = await listenNetworkState((value) => {
+          networkEventReceived = true;
+          if (mounted) setNetwork(value);
+        });
         if (mounted) stopNetworkListening = unlisten;
         else unlisten();
-      })
-      .catch((reason: unknown) => mounted && setError(errorMessage(reason)));
+      } catch (reason) {
+        if (mounted) setError(errorMessage(reason));
+      }
+      try {
+        const value = await getNetworkState();
+        if (mounted && !networkEventReceived) setNetwork(value);
+      } catch (reason) {
+        if (mounted) setError(errorMessage(reason));
+      }
+    })();
     void listenRuntimeProgress((next) => {
       if (mounted) {
-        const key = next.id.replace(/-\d+$/, "");
+        const key = next.id.replace(/:\d+$/, "");
         setProgress((current) => ({ ...current, [key]: next }));
       }
     })
@@ -96,11 +109,25 @@ export function RuntimesView() {
     };
   }, []);
 
+  useEffect(() => {
+    if (active) void refresh();
+  }, [active, refresh]);
+
   const updateCatalog = async () => {
     setChecking(true);
     setError(null);
+    setNotice(null);
     try {
-      setCatalog(await checkRuntimeUpdates());
+      const next = await checkRuntimeUpdates();
+      setCatalog(next);
+      setProgress((current) => pruneCompletedProgress(current, next));
+      setNotice(
+        next.updateStatus === "unchanged"
+          ? t.upToDate
+          : next.updateStatus === "updated"
+            ? t.updated
+            : null,
+      );
     } catch (reason) {
       setError(errorMessage(reason));
     } finally {
@@ -109,16 +136,28 @@ export function RuntimesView() {
   };
 
   const install = async (runtime: RuntimeCard, variant: string) => {
-    const id = progressId(runtime.id, variant);
-    setInstalling(id);
+    const id = progressId(runtime.id, runtime.version, variant);
+    if (installing[id]) return;
+    setInstalling((current) => ({ ...current, [id]: true }));
     setError(null);
+    setNotice(null);
     try {
-      await installRuntime(runtime.id, variant);
-      await refresh();
+      const result = await installRuntime(runtime.id, runtime.version, variant);
+      await refresh(false);
+      if (result.warning) setNotice(result.warning);
     } catch (reason) {
-      setError(errorMessage(reason));
+      if (errorMessage(reason) === "runtime_manifest_changed") {
+        await refresh(false);
+        setNotice(t.catalogChanged);
+      } else {
+        setError(errorMessage(reason));
+      }
     } finally {
-      setInstalling(null);
+      setInstalling((current) => {
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
     }
   };
 
@@ -135,7 +174,7 @@ export function RuntimesView() {
   const confirmRemove = async () => {
     if (!removeTarget) return;
     setRemoving(true);
-    setError(null);
+    setRemoveError(null);
     try {
       await removeRuntime(
         removeTarget.runtimeId,
@@ -143,15 +182,18 @@ export function RuntimesView() {
         removeTarget.variant,
       );
       setRemoveTarget(null);
+      setRemoveError(null);
       await refresh();
     } catch (reason) {
-      setError(errorMessage(reason));
+      setRemoveError(errorMessage(reason));
     } finally {
       setRemoving(false);
     }
   };
 
   const offline = network?.offlineMode ?? false;
+
+  if (!active) return null;
 
   return (
     <section className="flex max-w-4xl flex-col gap-6">
@@ -171,6 +213,7 @@ export function RuntimesView() {
       </header>
       {offline && <p className="text-sm text-muted-foreground">{t.offline}</p>}
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+      {notice && <p role="status" className="text-sm text-muted-foreground">{notice}</p>}
       {catalog?.warning && (
         <p role="alert" className="text-sm text-destructive">{catalog.warning}</p>
       )}
@@ -182,12 +225,15 @@ export function RuntimesView() {
             const recommended = runtime.variants.find(
               (variant) => variant.variant === runtime.recommendedVariant,
             );
-            const chosen = selectedVariants[runtime.id] ?? runtime.recommendedVariant ?? runtime.variants[0]?.variant;
+            const savedVariant = selectedVariants[runtime.id];
+            const chosen = runtime.variants.some((variant) => variant.variant === savedVariant)
+              ? savedVariant
+              : runtime.recommendedVariant ?? runtime.variants[0]?.variant;
             const currentProgress = chosen
-              ? progress[progressId(runtime.id, chosen)]
+              ? progress[progressId(runtime.id, runtime.version, chosen)]
               : undefined;
-            const installId = chosen ? progressId(runtime.id, chosen) : null;
-            const isInstalling = installId !== null && installing === installId;
+            const installId = chosen ? progressId(runtime.id, runtime.version, chosen) : null;
+            const isInstalling = installId !== null && Boolean(installing[installId]);
             return (
               <RuntimeCardView
                 key={runtime.id}
@@ -203,7 +249,10 @@ export function RuntimesView() {
                 }
                 onInstall={() => chosen && void install(runtime, chosen)}
                 onMakeDefault={(item) => void makeDefault(item)}
-                onRemove={(item) => setRemoveTarget(item)}
+                onRemove={(item) => {
+                  setRemoveError(null);
+                  setRemoveTarget(item);
+                }}
               />
             );
           })}
@@ -218,11 +267,17 @@ export function RuntimesView() {
         <p className="mt-1 text-sm text-muted-foreground">{t.moreEnginesDescription}</p>
         <p className="mt-2 text-xs text-muted-foreground">{t.futureEngines}</p>
       </div>
-      <p className="text-xs text-muted-foreground">{t.signatureNote}</p>
+      <p className="text-xs text-muted-foreground">
+        {catalog?.signatureVerified ? t.signatureVerifiedNote : t.bundledManifestNote}
+      </p>
+      <p className="text-xs text-muted-foreground">{t.archiveIntegrityNote}</p>
       <Dialog
         open={removeTarget !== null}
         onOpenChange={(open) => {
-          if (!open && !removing) setRemoveTarget(null);
+          if (!open && !removing) {
+            setRemoveTarget(null);
+            setRemoveError(null);
+          }
         }}
       >
         <DialogContent>
@@ -234,10 +289,16 @@ export function RuntimesView() {
                 : ""}
             </DialogDescription>
           </DialogHeader>
+          {removeError && (
+            <p role="alert" className="text-sm text-destructive">{removeError}</p>
+          )}
           <DialogFooter>
             <Button
               variant="outline"
-              onClick={() => setRemoveTarget(null)}
+              onClick={() => {
+                setRemoveTarget(null);
+                setRemoveError(null);
+              }}
               disabled={removing}
             >
               {t.cancel}
@@ -278,6 +339,9 @@ function RuntimeCardView({
   onRemove: (runtime: RemoveTarget) => void;
 }) {
   const selected = runtime.variants.find((variant) => variant.variant === chosen);
+  const alreadyInstalled = runtime.installed.some(
+    (item) => item.version === runtime.version && item.variant === chosen,
+  );
   const progressPercent = progress && progress.total > 0
     ? Math.min(100, Math.floor((progress.done / progress.total) * 100))
     : 0;
@@ -295,7 +359,7 @@ function RuntimeCardView({
         </div>
         <Button
           onClick={onInstall}
-          disabled={!selected || isInstalling || offline}
+          disabled={!selected || isInstalling || offline || alreadyInstalled}
           title={offline ? labels.offline : undefined}
         >
           {isInstalling ? labels.installing : labels.install}
@@ -413,8 +477,26 @@ function RuntimeCardView({
   );
 }
 
-function progressId(runtimeId: string, variant: string): string {
-  return `runtime-${runtimeId}-${variant}`;
+function progressId(runtimeId: string, version: string, variant: string): string {
+  return `runtime-${runtimeId}-${version}-${variant}`;
+}
+
+function pruneCompletedProgress(
+  progress: Record<string, DownloadProgress>,
+  catalog: RuntimeCatalog,
+): Record<string, DownloadProgress> {
+  const installed = new Set(
+    catalog.runtimes.flatMap((runtime) =>
+      runtime.installed.map((item) =>
+        progressId(item.runtimeId, item.version, item.variant),
+      ),
+    ),
+  );
+  return Object.fromEntries(
+    Object.entries(progress).filter(
+      ([id, entry]) => entry.state.kind !== "done" || installed.has(id),
+    ),
+  );
 }
 
 function progressLabel(progress: DownloadProgress, labels: typeof en.views.runtimes): string {

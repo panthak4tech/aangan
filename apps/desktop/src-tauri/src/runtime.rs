@@ -4,13 +4,15 @@ use aangan_runtime::{
     manifest::{self, RuntimeEntry, RuntimeManifest, RuntimeVariant},
     variant::{HwFacts, Kind, pick_variant},
 };
+use fs4::FileExt;
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
+    fs::OpenOptions,
     io::Write,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 use tauri::Emitter;
@@ -26,6 +28,8 @@ const RUNTIME_CACHE_FILE: &str = "runtime-manifest-cache.v1.json";
 const RUNTIME_SETTINGS_FILE: &str = "runtime-settings.json";
 const INSTALL_RECORD_FILE: &str = "aangan-runtime.json";
 const SMOKE_TEST_TIMEOUT: Duration = Duration::from_secs(15);
+static RUNTIME_CACHE_COMMIT_LOCK: Mutex<()> = Mutex::new(());
+static RUNTIME_SETTINGS_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct SignedRuntimeCache {
@@ -126,8 +130,30 @@ pub struct RuntimeCatalog {
     pub generated_at: String,
     pub signature_verified: bool,
     pub warning: Option<String>,
+    pub update_status: Option<RuntimeUpdateStatus>,
     pub default_runtime: Option<InstalledRuntimeKey>,
     pub runtimes: Vec<RuntimeCard>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum RuntimeUpdateStatus {
+    Updated,
+    Unchanged,
+}
+
+fn manifest_update_status(
+    candidate: &RuntimeManifest,
+    current: &RuntimeManifest,
+) -> Result<RuntimeUpdateStatus, String> {
+    if candidate.generated_at < current.generated_at {
+        return Err("The fetched runtime manifest is older than the accepted manifest.".into());
+    }
+    if candidate.generated_at == current.generated_at {
+        Ok(RuntimeUpdateStatus::Unchanged)
+    } else {
+        Ok(RuntimeUpdateStatus::Updated)
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -181,6 +207,7 @@ pub struct RuntimeInstallResult {
     pub version: String,
     pub variant: String,
     pub path: String,
+    pub warning: Option<String>,
 }
 
 struct LoadedManifest {
@@ -208,6 +235,7 @@ pub fn list(data_dir: &Path, bundled_json: &str) -> Result<RuntimeCatalog, Strin
         generated_at: loaded.manifest.generated_at,
         signature_verified: loaded.signature_verified,
         warning: loaded.warning,
+        update_status: None,
         default_runtime: settings.default_runtime,
         runtimes,
     })
@@ -221,7 +249,6 @@ pub async fn check_updates(
     if gate.is_offline() {
         return Err("Offline mode is on. Turn it off to check for runtime updates.".into());
     }
-    let existing = load_manifest(data_dir, bundled_json)?;
     let url = Url::parse(RUNTIME_MANIFEST_URL)
         .map_err(|error| format!("runtime manifest URL is invalid: {error}"))?;
     if !is_runtime_manifest_url(&url) {
@@ -242,8 +269,16 @@ pub async fn check_updates(
     verify_catalog(&bytes, signature, CATALOG_PUBLIC_KEYS)
         .map_err(|error| format!("runtime manifest signature is invalid: {error}"))?;
     let updated = parse_manifest(&bytes)?;
-    if updated.generated_at <= existing.manifest.generated_at {
-        return Err("No newer runtime manifest is available.".into());
+    let update_lock = RUNTIME_CACHE_COMMIT_LOCK
+        .lock()
+        .map_err(|error| format!("runtime manifest cache lock is unavailable: {error}"))?;
+    let existing = load_manifest(data_dir, bundled_json)?;
+    let update_status = manifest_update_status(&updated, &existing.manifest)?;
+    if update_status == RuntimeUpdateStatus::Unchanged {
+        drop(update_lock);
+        let mut catalog = list(data_dir, bundled_json)?;
+        catalog.update_status = Some(RuntimeUpdateStatus::Unchanged);
+        return Ok(catalog);
     }
     let cache = SignedRuntimeCache {
         manifest_json: bytes,
@@ -256,7 +291,10 @@ pub async fn check_updates(
         &encoded,
         "runtime manifest cache",
     )?;
-    list(data_dir, bundled_json)
+    drop(update_lock);
+    let mut catalog = list(data_dir, bundled_json)?;
+    catalog.update_status = Some(RuntimeUpdateStatus::Updated);
+    Ok(catalog)
 }
 
 pub async fn install(
@@ -265,6 +303,7 @@ pub async fn install(
     data_dir: &Path,
     bundled_json: &str,
     runtime_id: &str,
+    version: &str,
     variant_name: &str,
 ) -> Result<RuntimeInstallResult, String> {
     if gate.is_offline() {
@@ -277,6 +316,9 @@ pub async fn install(
         .iter()
         .find(|runtime| runtime.id == runtime_id)
         .ok_or_else(|| format!("runtime is not in the signed manifest: {runtime_id}"))?;
+    if runtime.version != version {
+        return Err("runtime_manifest_changed".into());
+    }
     let variant = runtime
         .variants
         .iter()
@@ -298,6 +340,9 @@ pub fn remove(
     if runtime_id == "_downloads" {
         return Err("runtime path components are invalid".into());
     }
+    let _settings_lock = RUNTIME_SETTINGS_LOCK
+        .lock()
+        .map_err(|error| format!("runtime settings lock is unavailable: {error}"))?;
     let canonical_data_dir = fs::canonicalize(data_dir)
         .map_err(|error| format!("could not resolve app data folder: {error}"))?;
     let runtime_root = canonical_data_dir.join("runtimes");
@@ -329,18 +374,28 @@ pub fn remove(
     {
         return Err("installed runtime resolves outside the runtimes folder".into());
     }
-    fs::remove_dir_all(&canonical_target)
-        .map_err(|error| format!("could not remove installed runtime: {error}"))?;
+    let key = InstalledRuntimeKey {
+        runtime_id: runtime_id.to_string(),
+        version: version.to_string(),
+        variant: variant.to_string(),
+    };
     let mut settings = load_settings(data_dir)?;
-    if settings.default_runtime.as_ref()
-        == Some(&InstalledRuntimeKey {
-            runtime_id: runtime_id.to_string(),
-            version: version.to_string(),
-            variant: variant.to_string(),
-        })
-    {
+    let previous_default = settings.default_runtime.clone();
+    let removes_default = previous_default.as_ref() == Some(&key);
+    if removes_default {
         settings.default_runtime = None;
         save_settings(data_dir, &settings)?;
+    }
+    if let Err(error) = fs::remove_dir_all(&canonical_target) {
+        if removes_default {
+            settings.default_runtime = previous_default;
+            if let Err(restore_error) = save_settings(data_dir, &settings) {
+                return Err(format!(
+                    "could not remove installed runtime: {error}; could not restore its default setting: {restore_error}"
+                ));
+            }
+        }
+        return Err(format!("could not remove installed runtime: {error}"));
     }
     Ok(())
 }
@@ -351,6 +406,9 @@ pub fn set_default(
     version: &str,
     variant: &str,
 ) -> Result<(), String> {
+    let _settings_lock = RUNTIME_SETTINGS_LOCK
+        .lock()
+        .map_err(|error| format!("runtime settings lock is unavailable: {error}"))?;
     let key = InstalledRuntimeKey {
         runtime_id: runtime_id.to_string(),
         version: version.to_string(),
@@ -417,11 +475,43 @@ pub fn cleanup_stale_tmp(data_dir: &Path) -> Result<(), String> {
             if metadata.is_symlink() || !metadata.is_dir() {
                 continue;
             }
+            let install_name = name.to_string_lossy();
+            let install_name = install_name
+                .strip_suffix(".tmp")
+                .ok_or_else(|| "temporary runtime folder has an invalid name".to_string())?;
+            let lock_path = child
+                .path()
+                .with_file_name(format!("{install_name}.install.lock"));
+            let lock = OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .read(true)
+                .write(true)
+                .open(&lock_path)
+                .map_err(|error| {
+                    format!(
+                        "could not open runtime installation lock {}: {error}",
+                        lock_path.display()
+                    )
+                })?;
+            match FileExt::try_lock(&lock) {
+                Ok(()) => {}
+                Err(fs4::TryLockError::WouldBlock) => continue,
+                Err(fs4::TryLockError::Error(error)) => {
+                    return Err(format!("could not lock stale runtime folder: {error}"));
+                }
+            }
             fs::remove_dir_all(child.path())
                 .map_err(|error| format!("could not remove stale runtime folder: {error}"))?;
         }
     }
     Ok(())
+}
+
+pub fn cleanup_stale_tmp_best_effort(data_dir: &Path) {
+    if let Err(error) = cleanup_stale_tmp(data_dir) {
+        eprintln!("could not clean up stale runtime folders: {error}");
+    }
 }
 
 fn runtime_card(
@@ -474,9 +564,26 @@ async fn install_variant(
     runtime: &RuntimeEntry,
     variant: &RuntimeVariant,
 ) -> Result<RuntimeInstallResult, String> {
+    let runtime_dir = ensure_runtime_folder(data_dir, &[&runtime.id]).await?;
+    let folder_name = format!("{}-{}", runtime.version, variant.meta.variant);
+    let final_path = runtime_dir.join(&folder_name);
+    let temporary = runtime_dir.join(format!("{folder_name}.tmp"));
+    let lock_path = runtime_dir.join(format!("{folder_name}.install.lock"));
+    let _install_lock = open_install_lock(&lock_path)?;
+    if path_exists(&final_path).await? {
+        return Err("this runtime version is already installed".into());
+    }
+    if path_exists(&temporary).await? {
+        return Err("a temporary installation already exists and needs cleanup".into());
+    }
     let downloads_dir = ensure_runtime_folder(
         data_dir,
-        &["_downloads", &runtime.id, &variant.meta.variant],
+        &[
+            "_downloads",
+            &runtime.id,
+            &runtime.version,
+            &variant.meta.variant,
+        ],
     )
     .await?;
     let mut archives = Vec::with_capacity(variant.files.len());
@@ -493,8 +600,9 @@ async fn install_variant(
             .filter(|name| is_safe_component(name))
             .ok_or_else(|| "runtime download filename is invalid".to_string())?;
         let destination = downloads_dir.join(filename);
+        let progress_id = runtime_progress_id(runtime, &variant.meta.variant);
         let spec = DownloadSpec {
-            id: format!("runtime-{}-{}-{index}", runtime.id, variant.meta.variant),
+            id: format!("{progress_id}:{index}"),
             url: file.url.clone(),
             dest: destination.clone(),
             sha256: file.sha256.clone(),
@@ -524,7 +632,7 @@ async fn install_variant(
                 emit_progress(
                     app,
                     Progress {
-                        id: format!("runtime-{}-{}", runtime.id, variant.meta.variant),
+                        id: progress_id.clone(),
                         state: DlState::Failed(message.clone()),
                         done: 0,
                         total: total_size,
@@ -538,10 +646,6 @@ async fn install_variant(
         archives.push(downloaded);
     }
 
-    let runtime_dir = ensure_runtime_folder(data_dir, &[&runtime.id]).await?;
-    let folder_name = format!("{}-{}", runtime.version, variant.meta.variant);
-    let temporary = runtime_dir.join(format!("{folder_name}.tmp"));
-    let final_path = runtime_dir.join(&folder_name);
     if path_exists(&temporary).await? || path_exists(&final_path).await? {
         return Err("this runtime version or a temporary install already exists".into());
     }
@@ -549,7 +653,7 @@ async fn install_variant(
     emit_progress(
         app,
         Progress {
-            id: format!("runtime-{}-{}", runtime.id, variant.meta.variant),
+            id: runtime_progress_id(runtime, &variant.meta.variant),
             state: DlState::Verifying,
             done: total_size,
             total: total_size,
@@ -607,7 +711,7 @@ async fn install_variant(
         emit_progress(
             app,
             Progress {
-                id: format!("runtime-{}-{}", runtime.id, variant.meta.variant),
+                id: runtime_progress_id(runtime, &variant.meta.variant),
                 state: DlState::Failed(error.clone()),
                 done: total_size,
                 total: total_size,
@@ -618,21 +722,21 @@ async fn install_variant(
         return Err(error);
     }
 
-    for archive in archives {
-        tokio::fs::remove_file(&archive).await.map_err(|error| {
-            format!("runtime installed, but could not remove download archive: {error}")
-        })?;
+    let warning = remove_archives(&archives).await;
+    if let Some(warning) = &warning {
+        eprintln!("{warning}");
     }
     let installed = RuntimeInstallResult {
         runtime_id: runtime.id.clone(),
         version: runtime.version.clone(),
         variant: variant.meta.variant.clone(),
         path: final_path.to_string_lossy().into_owned(),
+        warning,
     };
     emit_progress(
         app,
         Progress {
-            id: format!("runtime-{}-{}", runtime.id, variant.meta.variant),
+            id: runtime_progress_id(runtime, &variant.meta.variant),
             state: DlState::Done,
             done: total_size,
             total: total_size,
@@ -641,6 +745,48 @@ async fn install_variant(
         },
     );
     Ok(installed)
+}
+
+fn runtime_progress_id(runtime: &RuntimeEntry, variant: &str) -> String {
+    format!("runtime-{}-{}-{variant}", runtime.id, runtime.version)
+}
+
+fn open_install_lock(path: &Path) -> Result<fs::File, String> {
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(path)
+        .map_err(|error| format!("could not open runtime installation lock: {error}"))?;
+    match FileExt::try_lock(&file) {
+        Ok(()) => Ok(file),
+        Err(fs4::TryLockError::WouldBlock) => {
+            Err("an installation of this runtime variant is already in progress".into())
+        }
+        Err(fs4::TryLockError::Error(error)) => {
+            Err(format!("could not lock runtime installation: {error}"))
+        }
+    }
+}
+
+async fn remove_archives(archives: &[PathBuf]) -> Option<String> {
+    let mut errors = Vec::new();
+    for archive in archives {
+        match tokio::fs::remove_file(archive).await {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => errors.push(format!("{}: {error}", archive.display())),
+        }
+    }
+    if errors.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "Runtime installed, but could not remove download archive(s): {}",
+            errors.join("; ")
+        ))
+    }
 }
 
 fn emit_progress(app: &tauri::AppHandle, progress: Progress) {
@@ -959,25 +1105,60 @@ fn installed_runtimes(
                 Ok(bytes) => bytes,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(error) => {
-                    return Err(format!("could not read runtime install record: {error}"));
+                    eprintln!(
+                        "skipping runtime install record {}: could not read it: {error}",
+                        record_path.display()
+                    );
+                    continue;
                 }
             };
-            let record: RuntimeInstallRecord = serde_json::from_slice(&record_bytes)
-                .map_err(|error| format!("runtime install record is invalid: {error}"))?;
+            let record: RuntimeInstallRecord = match serde_json::from_slice(&record_bytes) {
+                Ok(record) => record,
+                Err(error) => {
+                    eprintln!(
+                        "skipping runtime install record {}: invalid JSON: {error}",
+                        record_path.display()
+                    );
+                    continue;
+                }
+            };
             if record.schema != 1
                 || !is_safe_component(&record.runtime_id)
                 || !is_safe_component(&record.version)
                 || !is_safe_component(&record.variant)
+                || record.variant.ends_with(".tmp")
                 || record.runtime_id != runtime_dir.file_name().to_string_lossy()
             {
-                return Err("runtime install record contains invalid path components".into());
+                eprintln!(
+                    "skipping runtime install record {}: invalid schema or identity",
+                    record_path.display()
+                );
+                continue;
             }
+            let expected_dir = format!("{}-{}", record.version, record.variant);
+            if version_dir.file_name().to_string_lossy() != expected_dir {
+                eprintln!(
+                    "skipping runtime install record {}: folder name does not match its identity",
+                    record_path.display()
+                );
+                continue;
+            }
+            let size_bytes = match directory_size(&version_dir.path()) {
+                Ok(size) => size,
+                Err(error) => {
+                    eprintln!(
+                        "skipping runtime install record {}: could not size it: {error}",
+                        record_path.display()
+                    );
+                    continue;
+                }
+            };
             installed.push(InstalledRuntime {
                 runtime_id: record.runtime_id.clone(),
                 version: record.version.clone(),
                 variant: record.variant.clone(),
                 path: version_dir.path().to_string_lossy().into_owned(),
-                size_bytes: directory_size(&version_dir.path())?,
+                size_bytes,
                 is_default: default_runtime.is_some_and(|key| {
                     key.runtime_id == record.runtime_id
                         && key.version == record.version
@@ -1096,6 +1277,17 @@ mod tests {
     }
 
     #[test]
+    fn removal_keeps_the_install_when_settings_cannot_be_read() {
+        let data = tempfile::tempdir().unwrap();
+        let install = data.path().join("runtimes/llama.cpp/b1234-cpu");
+        install_record(&install);
+        fs::write(data.path().join(RUNTIME_SETTINGS_FILE), b"{invalid").unwrap();
+
+        assert!(remove(data.path(), "llama.cpp", "b1234", "cpu").is_err());
+        assert!(install.is_dir());
+    }
+
+    #[test]
     fn removal_rejects_traversal_components() {
         let data = tempfile::tempdir().unwrap();
         let outside = data.path().join("outside");
@@ -1123,6 +1315,33 @@ mod tests {
     }
 
     #[test]
+    fn startup_cleanup_keeps_a_temporary_directory_owned_by_an_active_install() {
+        let data = tempfile::tempdir().unwrap();
+        let runtime_dir = data.path().join("runtimes/llama.cpp");
+        let temporary = runtime_dir.join("b1234-cpu.tmp");
+        fs::create_dir_all(&temporary).unwrap();
+        let lock = open_install_lock(&runtime_dir.join("b1234-cpu.install.lock")).unwrap();
+
+        cleanup_stale_tmp(data.path()).unwrap();
+
+        assert!(temporary.exists());
+        drop(lock);
+        cleanup_stale_tmp(data.path()).unwrap();
+        assert!(!temporary.exists());
+    }
+
+    #[test]
+    fn startup_cleanup_errors_do_not_block_app_setup() {
+        let data = tempfile::tempdir().unwrap();
+        let runtime_root = data.path().join("runtimes");
+        fs::write(&runtime_root, b"not a directory").unwrap();
+
+        cleanup_stale_tmp_best_effort(data.path());
+
+        assert!(runtime_root.is_file());
+    }
+
+    #[test]
     fn server_executable_must_exist_inside_the_install_folder() {
         let directory = tempfile::tempdir().unwrap();
         let error = safe_runtime_file(directory.path(), "llama-server.exe").unwrap_err();
@@ -1136,9 +1355,73 @@ mod tests {
 
         let manifest = parse_manifest(bundled.as_bytes()).unwrap();
 
-        assert_eq!(manifest.runtimes.len(), 1);
-        assert_eq!(manifest.runtimes[0].id, "llama.cpp");
-        assert!(!manifest.runtimes[0].variants.is_empty());
+        let llama = manifest
+            .runtimes
+            .iter()
+            .find(|runtime| runtime.id == "llama.cpp")
+            .expect("bundled manifest contains llama.cpp");
+        assert!(!llama.variants.is_empty());
+    }
+
+    #[test]
+    fn installed_inventory_skips_damaged_and_misnamed_entries() {
+        let data = tempfile::tempdir().unwrap();
+        let runtime_dir = data.path().join("runtimes/llama.cpp");
+        let healthy = runtime_dir.join("b1234-cpu");
+        install_record(&healthy);
+        let damaged = runtime_dir.join("b2222-cpu");
+        fs::create_dir_all(&damaged).unwrap();
+        fs::write(damaged.join(INSTALL_RECORD_FILE), b"{invalid").unwrap();
+        let renamed = runtime_dir.join("backup");
+        install_record(&renamed);
+        let staging = runtime_dir.join("b1234-cpu.tmp");
+        install_record(&staging);
+
+        let installed = installed_runtimes(data.path(), None).unwrap();
+
+        assert_eq!(installed.len(), 1);
+        assert_eq!(
+            installed[0].path,
+            healthy
+                .canonicalize()
+                .unwrap()
+                .to_string_lossy()
+                .to_string()
+        );
+    }
+
+    #[test]
+    fn runtime_manifest_update_status_distinguishes_new_same_and_old() {
+        let current = RuntimeManifest {
+            schema: 1,
+            generated_at: "2026-11-01T00:00:00Z".into(),
+            runtimes: Vec::new(),
+        };
+        let mut candidate = current.clone();
+        assert_eq!(
+            manifest_update_status(&candidate, &current).unwrap(),
+            RuntimeUpdateStatus::Unchanged
+        );
+        candidate.generated_at = "2026-11-02T00:00:00Z".into();
+        assert_eq!(
+            manifest_update_status(&candidate, &current).unwrap(),
+            RuntimeUpdateStatus::Updated
+        );
+        candidate.generated_at = "2026-10-31T23:59:59Z".into();
+        assert!(manifest_update_status(&candidate, &current).is_err());
+    }
+
+    #[tokio::test]
+    async fn archive_cleanup_errors_are_reported_as_warnings() {
+        let directory = tempfile::tempdir().unwrap();
+
+        let warning = remove_archives(&[directory.path().to_path_buf()]).await;
+
+        assert!(
+            warning
+                .unwrap()
+                .starts_with("Runtime installed, but could not remove download archive(s):")
+        );
     }
 
     #[test]

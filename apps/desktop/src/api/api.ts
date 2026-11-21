@@ -136,6 +136,7 @@ export async function listRuntimes(): Promise<RuntimeCatalog> {
       generatedAt: "2026-11-18T00:00:00Z",
       signatureVerified: false,
       warning: null,
+      updateStatus: null,
       defaultRuntime: null,
       runtimes: [],
     };
@@ -150,10 +151,11 @@ export async function checkRuntimeUpdates(): Promise<RuntimeCatalog> {
 
 export async function installRuntime(
   runtimeId: string,
+  version: string,
   variant: string,
 ): Promise<RuntimeInstallResult> {
   if (!inTauri) throw new Error("Runtime installation is available only in the desktop app.");
-  return invoke<RuntimeInstallResult>("runtime_install", { runtimeId, variant });
+  return invoke<RuntimeInstallResult>("runtime_install", { runtimeId, version, variant });
 }
 
 export async function removeRuntime(

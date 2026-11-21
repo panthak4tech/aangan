@@ -117,6 +117,7 @@ export interface RuntimeCatalog {
   generatedAt: string;
   signatureVerified: boolean;
   warning: string | null;
+  updateStatus: "updated" | "unchanged" | null;
   defaultRuntime: {
     runtimeId: string;
     version: string;
@@ -130,6 +131,7 @@ export interface RuntimeInstallResult {
   version: string;
   variant: string;
   path: string;
+  warning: string | null;
 }
 
 export interface GpuInfo {
