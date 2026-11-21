@@ -4,6 +4,12 @@ mod gpu;
 use aangan_types::{CpuInfo, DiskInfo, HardwareProfile, MemoryInfo, OsInfo, SCHEMA_VERSION};
 use sysinfo::{Disks, System};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimeHwFacts {
+    pub nvidia_cuda_driver: Option<u32>,
+    pub has_discrete_gpu: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct ProbeOptions {
     /// Run a ~2 second memory-read benchmark. Recommended: it replaces guesses.
@@ -67,6 +73,21 @@ pub fn probe(opts: &ProbeOptions) -> Result<HardwareProfile, sysinfo::Error> {
     })
 }
 
+pub fn runtime_facts() -> RuntimeHwFacts {
+    let gpus = gpu::probe_gpus();
+    runtime_facts_from(gpu::nvidia_cuda_driver_version(), &gpus)
+}
+
+fn runtime_facts_from(
+    nvidia_cuda_driver: Option<u32>,
+    gpus: &[aangan_types::GpuInfo],
+) -> RuntimeHwFacts {
+    RuntimeHwFacts {
+        nvidia_cuda_driver,
+        has_discrete_gpu: gpus.iter().any(|gpu| !gpu.is_integrated),
+    }
+}
+
 fn cpu_features() -> Vec<String> {
     #[allow(unused_mut)]
     let mut features: Vec<String> = Vec::new();
@@ -93,8 +114,45 @@ fn cpu_features() -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{probe, ProbeOptions};
-    use aangan_types::SCHEMA_VERSION;
+    use super::{probe, runtime_facts_from, ProbeOptions};
+    use aangan_types::{GpuInfo, GpuVendor, SCHEMA_VERSION};
+
+    #[test]
+    fn runtime_facts_use_injected_nvidia_and_discrete_gpu_values() {
+        let integrated = GpuInfo {
+            name: "Integrated".into(),
+            vendor: GpuVendor::Intel,
+            dedicated_vram_bytes: 0,
+            shared_memory_bytes: 0,
+            is_integrated: true,
+            bandwidth_gbps: None,
+            bandwidth_source: "unknown".into(),
+        };
+        let discrete = GpuInfo {
+            name: "Discrete".into(),
+            vendor: GpuVendor::Nvidia,
+            dedicated_vram_bytes: 8,
+            shared_memory_bytes: 0,
+            is_integrated: false,
+            bandwidth_gbps: None,
+            bandwidth_source: "unknown".into(),
+        };
+
+        assert_eq!(
+            runtime_facts_from(Some(12040), &[integrated.clone(), discrete]),
+            super::RuntimeHwFacts {
+                nvidia_cuda_driver: Some(12040),
+                has_discrete_gpu: true,
+            }
+        );
+        assert_eq!(
+            runtime_facts_from(None, &[integrated]),
+            super::RuntimeHwFacts {
+                nvidia_cuda_driver: None,
+                has_discrete_gpu: false,
+            }
+        );
+    }
 
     #[test]
     fn probes_hardware_and_respects_skipped_bandwidth_option() {

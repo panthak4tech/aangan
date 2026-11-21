@@ -1,0 +1,29 @@
+{
+  "tag_name": "b1234",
+  "assets": [
+    {
+      "name": "llama-b1234-bin-win-cpu-x64.zip",
+      "browser_download_url": "https://github.com/ggml-org/llama.cpp/releases/download/b1234/llama-b1234-bin-win-cpu-x64.zip"
+    },
+    {
+      "name": "llama-b1234-bin-win-vulkan-x64.zip",
+      "browser_download_url": "https://github.com/ggml-org/llama.cpp/releases/download/b1234/llama-b1234-bin-win-vulkan-x64.zip"
+    },
+    {
+      "name": "llama-b1234-bin-win-cuda-12.4-x64.zip",
+      "browser_download_url": "https://github.com/ggml-org/llama.cpp/releases/download/b1234/llama-b1234-bin-win-cuda-12.4-x64.zip"
+    },
+    {
+      "name": "cudart-llama-bin-win-cuda-12.4-x64.zip",
+      "browser_download_url": "https://github.com/ggml-org/llama.cpp/releases/download/b1234/cudart-llama-bin-win-cuda-12.4-x64.zip"
+    },
+    {
+      "name": "llama-b1234-bin-win-cuda-13.1-x64.zip",
+      "browser_download_url": "https://github.com/ggml-org/llama.cpp/releases/download/b1234/llama-b1234-bin-win-cuda-13.1-x64.zip"
+    },
+    {
+      "name": "cudart-llama-bin-win-cuda-13.1-x64.zip",
+      "browser_download_url": "https://github.com/ggml-org/llama.cpp/releases/download/b1234/cudart-llama-bin-win-cuda-13.1-x64.zip"
+    }
+  ]
+}

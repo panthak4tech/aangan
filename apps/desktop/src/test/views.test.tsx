@@ -24,6 +24,7 @@ import {
   refreshCatalog,
   resetCatalog,
   openNetworkDocs,
+  removeRuntime,
   saveHardwareReport,
   scanHardware,
   resumeDownload,
@@ -77,6 +78,7 @@ vi.mock("@/api/api", async () => {
     recommendModels: vi.fn(),
     refreshCatalog: vi.fn(),
     resetCatalog: vi.fn(),
+    removeRuntime: vi.fn(),
     saveHardwareReport: vi.fn(),
     scanHardware: vi.fn(),
     setCatalogRefreshConsent: vi.fn(),
@@ -120,6 +122,7 @@ beforeEach(() => {
     modelFolder: "C:\\models",
     modelFiles: [],
     incompleteDownloads: [],
+    runtimeInstalls: [],
     catalogCacheBytes: 0,
     totalBytes: 0,
   });
@@ -161,6 +164,7 @@ beforeEach(() => {
   vi.mocked(chooseModelFolder).mockResolvedValue(null);
   vi.mocked(setModelFolder).mockImplementation(async (folder) => folder);
   vi.mocked(deleteStorageFile).mockResolvedValue();
+  vi.mocked(removeRuntime).mockResolvedValue();
   vi.mocked(openModelFileFolder).mockResolvedValue();
   vi.mocked(openModelFolder).mockResolvedValue();
   vi.mocked(getNetworkActivity).mockResolvedValue([]);
@@ -829,6 +833,7 @@ describe("SettingsView and FirstRunWizard", () => {
         modelFolder: "C:\\models",
         modelFiles: [],
         incompleteDownloads: [],
+        runtimeInstalls: [],
         catalogCacheBytes: 0,
         totalBytes: 0,
       })
@@ -841,6 +846,7 @@ describe("SettingsView and FirstRunWizard", () => {
           modelId: "small-model",
         }],
         incompleteDownloads: [],
+        runtimeInstalls: [],
         catalogCacheBytes: 0,
         totalBytes: 1024,
       });
@@ -860,6 +866,7 @@ describe("SettingsView and FirstRunWizard", () => {
         modelFolder: "C:\\recovered",
         modelFiles: [],
         incompleteDownloads: [],
+        runtimeInstalls: [],
         catalogCacheBytes: 0,
         totalBytes: 0,
       });
@@ -880,6 +887,7 @@ describe("SettingsView and FirstRunWizard", () => {
         modelFolder: "C:\\models",
         modelFiles: [],
         incompleteDownloads: [],
+        runtimeInstalls: [],
         catalogCacheBytes: 0,
         totalBytes: 0,
       })
@@ -892,6 +900,7 @@ describe("SettingsView and FirstRunWizard", () => {
           modelId: "small-model",
         }],
         incompleteDownloads: [],
+        runtimeInstalls: [],
         catalogCacheBytes: 0,
         totalBytes: 1024,
       });
@@ -914,6 +923,7 @@ describe("SettingsView and FirstRunWizard", () => {
         modelId: "small-model",
       }],
       incompleteDownloads: [],
+      runtimeInstalls: [],
       catalogCacheBytes: 0,
       totalBytes: 1024,
     };
@@ -926,6 +936,7 @@ describe("SettingsView and FirstRunWizard", () => {
         modelId: "new-model",
       }],
       incompleteDownloads: [],
+      runtimeInstalls: [],
       catalogCacheBytes: 0,
       totalBytes: 2048,
     };
@@ -970,6 +981,7 @@ describe("SettingsView and FirstRunWizard", () => {
         },
       ],
       incompleteDownloads: [],
+      runtimeInstalls: [],
       catalogCacheBytes: 0,
       totalBytes: 3072,
     });
@@ -994,6 +1006,60 @@ describe("SettingsView and FirstRunWizard", () => {
       );
       expect(onDownloadDeleted).toHaveBeenCalledWith("small-model-a");
     });
+  });
+
+  it("confirms runtime removal from Storage and refreshes the inventory", async () => {
+    const installedInfo = {
+      modelFolder: "C:\\models",
+      modelFiles: [],
+      incompleteDownloads: [],
+      runtimeInstalls: [{
+        runtimeId: "llama.cpp",
+        version: "b12503",
+        variant: "cuda-12.4",
+        path: "C:\\data\\runtimes\\llama.cpp\\b12503-cuda-12.4",
+        sizeBytes: 1024,
+      }],
+      catalogCacheBytes: 0,
+      totalBytes: 1024,
+    };
+    const removedInfo = {
+      ...installedInfo,
+      runtimeInstalls: [],
+      totalBytes: 0,
+    };
+    vi.mocked(getStorageInfo)
+      .mockResolvedValueOnce(installedInfo)
+      .mockResolvedValueOnce(removedInfo);
+    render(<ToastProvider><SettingsView /></ToastProvider>);
+
+    const runtimeText = await screen.findByText(
+      "llama.cpp · b12503 · cuda-12.4",
+    );
+    const runtimeRow = runtimeText.closest("li");
+    if (!runtimeRow) throw new Error("Expected the runtime Storage row.");
+    fireEvent.click(within(runtimeRow).getByRole("button", {
+      name: en.views.settings.storage.removeRuntime,
+    }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(
+      en.views.settings.storage.removeRuntimeDescription("b12503", "cuda-12.4"),
+    )).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", {
+      name: en.views.settings.storage.removeRuntime,
+    }));
+
+    await waitFor(() => {
+      expect(removeRuntime).toHaveBeenCalledWith(
+        "llama.cpp",
+        "b12503",
+        "cuda-12.4",
+      );
+      expect(getStorageInfo).toHaveBeenCalledTimes(2);
+    });
+    expect(screen.queryByText("llama.cpp · b12503 · cuda-12.4")).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByText(en.views.settings.storage.total("0 B"))).toBeInTheDocument();
   });
 
   it("renders the real data path and supports open and copy actions", async () => {

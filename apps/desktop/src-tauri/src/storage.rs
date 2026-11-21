@@ -24,6 +24,7 @@ pub struct StorageInfo {
     pub model_folder: String,
     pub model_files: Vec<StorageFile>,
     pub incomplete_downloads: Vec<StorageFile>,
+    pub runtime_installs: Vec<crate::runtime::RuntimeStorageEntry>,
     pub catalog_cache_bytes: u64,
     pub total_bytes: u64,
 }
@@ -179,13 +180,20 @@ pub fn storage_info(data_dir: &Path, catalog_data: &Catalog) -> Result<StorageIn
             return Err(format!("could not inspect the catalog cache: {error}"));
         }
     };
-    total_bytes = total_bytes.saturating_add(catalog_cache_bytes);
+    let runtime_installs = crate::runtime::storage_entries(data_dir)?;
+    let runtime_bytes = runtime_installs.iter().fold(0_u64, |total, runtime| {
+        total.saturating_add(runtime.size_bytes)
+    });
+    total_bytes = total_bytes
+        .saturating_add(catalog_cache_bytes)
+        .saturating_add(runtime_bytes);
     model_files.sort_by(|left, right| left.path.cmp(&right.path));
     incomplete_downloads.sort_by(|left, right| left.path.cmp(&right.path));
     Ok(StorageInfo {
         model_folder: current.to_string_lossy().into_owned(),
         model_files,
         incomplete_downloads,
+        runtime_installs,
         catalog_cache_bytes,
         total_bytes,
     })
@@ -460,6 +468,36 @@ mod tests {
             info.incomplete_downloads[0].model_id.as_deref(),
             Some(model.id.as_str())
         );
+    }
+
+    #[test]
+    fn includes_installed_runtime_sizes_in_storage_inventory() {
+        let catalog = catalog::validate_catalog_json(
+            include_str!("../../../../catalog/models.v1.json").as_bytes(),
+        )
+        .expect("bundled catalog");
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let data_dir = temp.path().join("data");
+        let install = data_dir.join("runtimes/llama.cpp/b1234-cpu");
+        fs::create_dir_all(&install).expect("runtime install folder");
+        fs::write(install.join("llama-server.exe"), b"server").expect("runtime executable");
+        fs::write(
+            install.join("aangan-runtime.json"),
+            br#"{"schema":1,"runtimeId":"llama.cpp","version":"b1234","variant":"cpu","serverExe":"llama-server.exe"}"#,
+        )
+        .expect("runtime install record");
+        let expected_size = fs::metadata(install.join("llama-server.exe"))
+            .expect("runtime executable metadata")
+            .len()
+            + fs::metadata(install.join("aangan-runtime.json"))
+                .expect("runtime record metadata")
+                .len();
+
+        let info = storage_info(&data_dir, &catalog).expect("storage information");
+
+        assert_eq!(info.runtime_installs.len(), 1);
+        assert_eq!(info.runtime_installs[0].size_bytes, expected_size);
+        assert_eq!(info.total_bytes, expected_size);
     }
 
     #[test]

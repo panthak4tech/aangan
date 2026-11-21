@@ -75,8 +75,63 @@ export interface StorageInfo {
   modelFolder: string;
   modelFiles: StorageFile[];
   incompleteDownloads: StorageFile[];
+  runtimeInstalls: RuntimeStorageEntry[];
   catalogCacheBytes: number;
   totalBytes: number;
+}
+
+export interface RuntimeStorageEntry {
+  runtimeId: string;
+  version: string;
+  variant: string;
+  path: string;
+  sizeBytes: number;
+}
+
+export type RuntimeKind = "cpu" | "vulkan" | "cuda";
+
+export interface RuntimeVariant {
+  variant: string;
+  kind: RuntimeKind;
+  requiresCudaDriver: number | null;
+  sizeBytes: number;
+}
+
+export interface InstalledRuntime extends RuntimeStorageEntry {
+  isDefault: boolean;
+}
+
+export interface RuntimeCard {
+  id: string;
+  displayName: string;
+  version: string;
+  license: string;
+  homepage: string;
+  recommendedVariant: string | null;
+  recommendationReason: string;
+  variants: RuntimeVariant[];
+  installed: InstalledRuntime[];
+}
+
+export interface RuntimeCatalog {
+  generatedAt: string;
+  signatureVerified: boolean;
+  warning: string | null;
+  updateStatus: "updated" | "unchanged" | null;
+  defaultRuntime: {
+    runtimeId: string;
+    version: string;
+    variant: string;
+  } | null;
+  runtimes: RuntimeCard[];
+}
+
+export interface RuntimeInstallResult {
+  runtimeId: string;
+  version: string;
+  variant: string;
+  path: string;
+  warning: string | null;
 }
 
 export interface GpuInfo {

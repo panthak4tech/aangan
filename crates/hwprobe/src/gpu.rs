@@ -24,6 +24,10 @@ pub fn probe_gpus() -> Vec<GpuInfo> {
     classify_adapters(platform::list_adapters())
 }
 
+pub fn nvidia_cuda_driver_version() -> Option<u32> {
+    platform::cuda_driver_version()
+}
+
 /// Filters software adapters and applies the known integrated-device ID lists.
 fn classify_adapters(adapters: Vec<AdapterCandidate>) -> Vec<GpuInfo> {
     adapters
@@ -114,6 +118,12 @@ mod platform {
             .collect()
     }
 
+    pub fn cuda_driver_version() -> Option<u32> {
+        let nvml = Nvml::init().ok()?;
+        let version = nvml.sys_cuda_driver_version().ok()?;
+        u32::try_from(version).ok()
+    }
+
     /// Consumes the matching NVML entry, falling back to the first remaining device.
     fn take_match(name: &str, pool: &mut Vec<NvmlGpu>) -> Option<NvmlGpu> {
         let normalized_name = name.to_lowercase();
@@ -189,6 +199,10 @@ mod platform {
 
     pub fn list_adapters() -> Vec<AdapterCandidate> {
         Vec::new()
+    }
+
+    pub fn cuda_driver_version() -> Option<u32> {
+        None
     }
 }
 

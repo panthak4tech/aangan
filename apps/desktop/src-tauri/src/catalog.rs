@@ -1494,12 +1494,19 @@ mod tests {
     }
 
     #[test]
-    fn committed_catalog_has_a_valid_signature_from_a_trusted_key() {
+    fn committed_catalog_and_runtime_manifests_have_valid_trusted_signatures() {
         let catalog_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../catalog");
         let json = fs::read(catalog_dir.join("models.v1.json")).expect("bundled catalog");
         let signature = fs::read_to_string(catalog_dir.join("models.v1.json.minisig"))
             .expect("bundled catalog signature is missing");
         verify_catalog(&json, &signature, CATALOG_PUBLIC_KEYS)
             .expect("bundled catalog signature is invalid");
+
+        let runtime_json =
+            fs::read(catalog_dir.join("runtimes.v1.json")).expect("runtime manifest");
+        let runtime_signature = fs::read_to_string(catalog_dir.join("runtimes.v1.json.minisig"))
+            .expect("runtime manifest signature is missing");
+        verify_catalog(&runtime_json, &runtime_signature, CATALOG_PUBLIC_KEYS)
+            .expect("runtime manifest signature is invalid");
     }
 }

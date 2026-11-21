@@ -1,13 +1,14 @@
-import { Cpu, LayoutGrid, Settings } from "lucide-react";
+import { Cpu, LayoutGrid, Settings, Zap } from "lucide-react";
 import mark from "@/assets/brand/aangan-mark.png";
 import { cn } from "@/lib/utils";
 import { en } from "@/i18n/en";
 
-export type View = "scan" | "models" | "settings";
+export type View = "scan" | "models" | "runtimes" | "settings";
 
 const ITEMS: { id: View; icon: typeof Cpu }[] = [
   { id: "scan", icon: Cpu },
   { id: "models", icon: LayoutGrid },
+  { id: "runtimes", icon: Zap },
   { id: "settings", icon: Settings },
 ];
 

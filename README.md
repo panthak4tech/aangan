@@ -55,6 +55,14 @@ previously selected model folders so their files remain visible and manageable
 after you change the destination. You can open folders or delete model and
 incomplete files there. Model weights retain their publishers' licenses.
 
+## Runtimes
+
+A runtime is the local engine that loads and runs a downloaded model. Aangan
+installs the selected llama.cpp build under its application data folder,
+verifies its signed manifest and archive checksums, and lets you remove it from
+the Runtimes page or Settings → Storage. Runtime installation is optional and
+starts only when you choose **Install**.
+
 Speeds are **estimates** from published formulas in [docs/estimation.md](docs/estimation.md); real measured benchmarks are on the roadmap.
 
 ## Help wanted

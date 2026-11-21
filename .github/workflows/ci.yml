@@ -120,6 +120,7 @@ jobs:
       - run: powershell -NoProfile -File apps/desktop/src-tauri/tests/cli-path.test.ps1
       - run: powershell -NoProfile -File apps/desktop/src-tauri/tests/release-utils.test.ps1
       - run: cargo clippy -p ${{ env.DESKTOP_CRATE }} --all-targets --locked -- -D warnings
+      - run: cargo test -p ${{ env.DESKTOP_CRATE }} --lib committed_catalog_and_runtime_manifests_have_valid_trusted_signatures --locked
 
   licenses:
     name: dependencies (licenses, advisories, bans)
@@ -142,10 +143,14 @@ jobs:
           python-version: "3.12"
       - name: Install catalog builder dependency
         run: python -m pip install -r tools/catalog/requirements-dev.txt
+      - name: Install runtime manifest builder dependency
+        run: python -m pip install -r tools/runtimes/requirements-dev.txt
       - name: Validate committed catalog
         run: python tools/catalog/build_catalog.py --check
       - name: Test catalog builder
         run: python -m pytest tools/catalog/test_build_catalog.py tools/catalog/test_verify_catalog.py
+      - name: Test runtime manifest builder
+        run: python -m pytest tools/runtimes/test_build_runtimes.py
 
   ci-required:
     name: ci-required
