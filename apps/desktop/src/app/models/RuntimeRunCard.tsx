@@ -32,9 +32,9 @@ export function RuntimeRunCard({
   });
   const [endpoint, setEndpoint] = useState<RuntimeEndpoint | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
+  const logPaneRef = useRef<HTMLPreElement>(null);
   const [filter, setFilter] = useState("");
   const [paused, setPaused] = useState(false);
-  const pausedRef = useRef(false);
   const [ctx, setCtx] = useState(context);
   const [runtimeInstalled, setRuntimeInstalled] = useState(false);
   const [working, setWorking] = useState(false);
@@ -42,23 +42,40 @@ export function RuntimeRunCard({
 
   useEffect(() => {
     let active = true;
+    const unlistenFunctions: Array<() => void> = [];
+    const registerListener = (registration: Promise<() => void>) => {
+      void registration
+        .then((unlisten) => {
+          if (active) unlistenFunctions.push(unlisten);
+          else unlisten();
+        })
+        .catch((reason: unknown) => {
+          if (active) {
+            setError(reason instanceof Error ? reason.message : String(reason));
+          }
+        });
+    };
     void getRuntimeStatus().then((next) => active && setStatus(next));
     void getRuntimeLogs().then((next) => active && setLogs(next));
     void listRuntimes().then((catalog) => {
       if (active) setRuntimeInstalled(catalog.runtimes.some((runtime) => runtime.installed.length > 0));
     });
     void getRuntimeEndpoint().then((next) => active && setEndpoint(next));
-    void Promise.all([listenRuntimeState(setStatus), listenRuntimeLogs((line) => {
-      if (!pausedRef.current) setLogs((current) => [...current.slice(-4999), line]);
-    })]).catch(() => undefined);
+    registerListener(listenRuntimeState(setStatus));
+    registerListener(listenRuntimeLogs((line) => {
+      setLogs((current) => [...current.slice(-4999), line]);
+    }));
     return () => {
       active = false;
+      unlistenFunctions.forEach((unlisten) => unlisten());
     };
   }, []);
 
   useEffect(() => {
-    pausedRef.current = paused;
-  }, [paused]);
+    if (!paused && logPaneRef.current) {
+      logPaneRef.current.scrollTop = logPaneRef.current.scrollHeight;
+    }
+  }, [logs, paused]);
 
   useEffect(() => {
     if (status.state.kind === "ready") {
@@ -206,7 +223,7 @@ export function RuntimeRunCard({
               Copy diagnostics (no secrets)
             </Button>
           </div>
-          <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted p-3 font-mono text-xs text-foreground">
+          <pre ref={logPaneRef} className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted p-3 font-mono text-xs text-foreground">
             {filteredLogs.join("\n")}
           </pre>
         </div>

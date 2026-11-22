@@ -225,19 +225,21 @@ async fn runtime_set_default(
 }
 
 #[tauri::command]
-fn runtime_start(
+async fn runtime_start(
     supervisor: State<'_, Arc<runtime::supervisor::RuntimeSupervisor>>,
     model_id: String,
     ctx: Option<u32>,
 ) -> Result<runtime::supervisor::RuntimeStatus, String> {
-    supervisor.start(&model_id, ctx.unwrap_or(4096))
+    let supervisor = supervisor.inner().clone();
+    run_runtime_blocking(move || supervisor.start(&model_id, ctx.unwrap_or(4096))).await?
 }
 
 #[tauri::command]
-fn runtime_stop(
+async fn runtime_stop(
     supervisor: State<'_, Arc<runtime::supervisor::RuntimeSupervisor>>,
 ) -> Result<runtime::supervisor::RuntimeStatus, String> {
-    supervisor.stop()
+    let supervisor = supervisor.inner().clone();
+    run_runtime_blocking(move || supervisor.stop()).await?
 }
 
 #[tauri::command]
@@ -255,10 +257,11 @@ fn runtime_logs(
 }
 
 #[tauri::command]
-fn runtime_copy_diagnostics(
+async fn runtime_copy_diagnostics(
     supervisor: State<'_, Arc<runtime::supervisor::RuntimeSupervisor>>,
 ) -> Result<String, String> {
-    Ok(supervisor.copy_diagnostics())
+    let supervisor = supervisor.inner().clone();
+    run_runtime_blocking(move || supervisor.copy_diagnostics()).await
 }
 
 #[tauri::command]
@@ -274,6 +277,14 @@ fn runtime_clear_logs(
 ) -> Result<(), String> {
     supervisor.clear_logs();
     Ok(())
+}
+
+async fn run_runtime_blocking<T: Send + 'static>(
+    operation: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(operation)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 async fn restore_downloads(
@@ -716,10 +727,20 @@ pub fn run() -> Result<(), tauri::Error> {
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_TEXT_FILE_BYTES, app_data_dir_at, app_paths_for_existing_dir, save_text_file_blocking,
-        validate_notices_file, validate_save_request,
+        MAX_TEXT_FILE_BYTES, app_data_dir_at, app_paths_for_existing_dir, run_runtime_blocking,
+        save_text_file_blocking, validate_notices_file, validate_save_request,
     };
-    use std::path::Path;
+    use std::{path::Path, thread};
+
+    #[test]
+    fn runtime_operations_run_on_a_blocking_thread() {
+        let caller = thread::current().id();
+        let worker =
+            tauri::async_runtime::block_on(run_runtime_blocking(|| thread::current().id()))
+                .expect("blocking runtime task");
+
+        assert_ne!(caller, worker);
+    }
 
     #[test]
     fn notices_file_validation_reports_missing_resource() {
@@ -845,15 +866,108 @@ mod tests {
     #[test]
     fn installer_removes_aangan_local_data_when_requested() {
         let installer = include_str!("../installer.nsi");
-        let data_cleanup = installer
-            .split("; Delete app data if the checkbox is selected")
-            .nth(1)
-            .and_then(|section| section.split("!ifmacrodef NSIS_HOOK_POSTUNINSTALL").next())
-            .expect("app-data cleanup section");
+        let checked_data_deletion = installer
+            .find("${If} $DeleteAppDataCheckboxState = 1")
+            .expect("checked data-deletion guard");
+        let update_guard = installer
+            .find("${AndIf} $UpdateMode <> 1")
+            .expect("update-mode guard");
+        let cleanup_call = installer
+            .find(r#"-File "$INSTDIR\safe-delete-appdata.ps1""#)
+            .expect("reparse-safe cleanup helper call");
+        let install_directory_deletion = installer
+            .find("; Delete the app directory and its content from disk")
+            .expect("app-directory cleanup section");
 
-        assert!(data_cleanup.contains("${If} $DeleteAppDataCheckboxState = 1"));
-        assert!(data_cleanup.contains("${AndIf} $UpdateMode <> 1"));
-        assert!(data_cleanup.contains(r#"RmDir /r "$LOCALAPPDATA\${PRODUCTNAME}""#));
+        assert!(checked_data_deletion < update_guard);
+        assert!(update_guard < cleanup_call);
+        assert!(cleanup_call < install_directory_deletion);
+        assert!(!installer.contains(r#"RmDir /r "$LOCALAPPDATA\${PRODUCTNAME}""#));
+        let cleanup_script = include_str!("../safe-delete-appdata.ps1");
+        assert!(cleanup_script.contains("[System.IO.FileAttributes]::ReparsePoint"));
+        assert!(cleanup_script.contains("[System.IO.Directory]::EnumerateFileSystemEntries"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn app_data_cleanup_does_not_follow_junctions() {
+        use std::process::Command;
+
+        let directory = tempfile::tempdir().expect("temporary test directory");
+        let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("safe-delete-appdata.ps1");
+        let absent_roaming = directory.path().join("absent-roaming-data");
+        let absent_local = directory.path().join("absent-local-data");
+        let quote_path = |path: &Path| format!("'{}'", path.to_string_lossy().replace('\'', "''"));
+        let create_junction = |link: &Path, target: &Path| {
+            let command = format!(
+                "New-Item -ItemType Junction -Path {} -Target {} | Out-Null",
+                quote_path(link),
+                quote_path(target)
+            );
+            let output = Command::new("powershell.exe")
+                .args(["-NoProfile", "-NonInteractive", "-Command"])
+                .arg(command)
+                .output()
+                .expect("create junction");
+            assert!(
+                output.status.success(),
+                "junction creation failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        let run_cleanup = |data_path: &Path| {
+            Command::new("powershell.exe")
+                .args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                ])
+                .arg(&script)
+                .arg("-RoamingDataPath")
+                .arg(&absent_roaming)
+                .arg("-LocalDataPath")
+                .arg(&absent_local)
+                .arg("-AanganDataPath")
+                .arg(data_path)
+                .output()
+                .expect("run safe app-data cleanup")
+        };
+
+        let app_data = directory.path().join("Aangan");
+        let external_models = directory.path().join("external-models");
+        let model = external_models.join("model.gguf");
+        std::fs::create_dir_all(&app_data).expect("Aangan data directory");
+        std::fs::create_dir_all(&external_models).expect("external model directory");
+        std::fs::write(&model, b"external model").expect("external model file");
+        create_junction(&app_data.join("models"), &external_models);
+
+        let output = run_cleanup(&app_data);
+
+        assert!(
+            output.status.success(),
+            "cleanup failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!app_data.exists());
+        assert!(model.exists());
+
+        let external_app_data = directory.path().join("external-app-data");
+        let external_marker = external_app_data.join("marker.txt");
+        let app_data_junction = directory.path().join("Aangan-link");
+        std::fs::create_dir_all(&external_app_data).expect("external app-data directory");
+        std::fs::write(&external_marker, b"external data").expect("external marker file");
+        create_junction(&app_data_junction, &external_app_data);
+
+        let output = run_cleanup(&app_data_junction);
+        assert!(
+            output.status.success(),
+            "root junction cleanup failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!app_data_junction.exists());
+        assert!(external_marker.exists());
     }
 
     #[test]

@@ -6,19 +6,22 @@ use crate::{
 #[cfg(windows)]
 use aangan_runtime::supervise::job::KillOnCloseJob;
 use aangan_runtime::supervise::{
-    ApiKeyMode, LaunchParams, api_key_mode, build_args, is_blocked_env, loopback_status,
-    random_key, redact,
+    ApiKeyMode, LaunchParams, api_key_mode, build_args, loopback_status, random_key, redact,
+    remove_blocked_env,
 };
 use fitcalc::{Placement, Tunables, recommend};
 use hwprobe::{ProbeOptions, probe};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::VecDeque,
-    env, fs,
+    fs,
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -36,7 +39,9 @@ pub enum RuntimeState {
     Ready,
     Stopping,
     Failed {
+        #[serde(rename = "exitCode")]
         exit_code: Option<i32>,
+        #[serde(rename = "lastLines")]
         last_lines: Vec<String>,
     },
 }
@@ -57,8 +62,47 @@ pub struct RuntimeEndpoint {
 }
 
 struct RunningProcess {
+    session_id: u64,
     child: Child,
     key: String,
+    cancel_monitor: Arc<AtomicBool>,
+    #[cfg(windows)]
+    _job: KillOnCloseJob,
+}
+
+struct SupervisorState {
+    state: RuntimeState,
+    session_id: Option<u64>,
+}
+
+impl SupervisorState {
+    fn new() -> Self {
+        Self {
+            state: RuntimeState::Stopped,
+            session_id: None,
+        }
+    }
+
+    fn start_session(&mut self, session_id: u64) {
+        self.state = RuntimeState::Starting;
+        self.session_id = Some(session_id);
+    }
+
+    fn set_unowned(&mut self, state: RuntimeState) {
+        self.state = state;
+        self.session_id = None;
+    }
+
+    fn update_session(&mut self, session_id: u64, state: RuntimeState, finished: bool) -> bool {
+        if self.session_id != Some(session_id) {
+            return false;
+        }
+        self.state = state;
+        if finished {
+            self.session_id = None;
+        }
+        true
+    }
 }
 
 pub struct RuntimeSupervisor {
@@ -66,28 +110,28 @@ pub struct RuntimeSupervisor {
 }
 
 struct SupervisorInner {
-    state: Mutex<RuntimeState>,
+    state: Mutex<SupervisorState>,
+    lifecycle: Mutex<()>,
+    next_session_id: AtomicU64,
     running: Mutex<Option<RunningProcess>>,
     logs: Mutex<VecDeque<String>>,
     port: Mutex<Option<u16>>,
     data_dir: PathBuf,
     app: AppHandle,
-    #[cfg(windows)]
-    job: Mutex<Option<KillOnCloseJob>>,
 }
 
 impl RuntimeSupervisor {
     pub fn new(app: AppHandle, data_dir: PathBuf) -> Self {
         Self {
             inner: Arc::new(SupervisorInner {
-                state: Mutex::new(RuntimeState::Stopped),
+                state: Mutex::new(SupervisorState::new()),
+                lifecycle: Mutex::new(()),
+                next_session_id: AtomicU64::new(1),
                 running: Mutex::new(None),
                 logs: Mutex::new(VecDeque::with_capacity(LOG_LIMIT)),
                 port: Mutex::new(None),
                 data_dir,
                 app,
-                #[cfg(windows)]
-                job: Mutex::new(None),
             }),
         }
     }
@@ -97,7 +141,7 @@ impl RuntimeSupervisor {
             .inner
             .state
             .lock()
-            .map(|guard| guard.clone())
+            .map(|guard| guard.state.clone())
             .unwrap_or(RuntimeState::Failed {
                 exit_code: None,
                 last_lines: vec!["Supervisor state is unavailable.".into()],
@@ -126,12 +170,16 @@ impl RuntimeSupervisor {
     }
 
     pub fn endpoint(&self) -> Option<RuntimeEndpoint> {
-        let state = self.inner.state.lock().ok()?;
-        if !matches!(*state, RuntimeState::Ready) {
+        let is_ready = self
+            .inner
+            .state
+            .lock()
+            .ok()
+            .is_some_and(|guard| matches!(guard.state, RuntimeState::Ready));
+        if !is_ready {
             return None;
         }
-        let port_guard = self.inner.port.lock().ok()?;
-        let port = (*port_guard)?;
+        let port = self.inner.port.lock().ok().and_then(|guard| *guard)?;
         let running = self.inner.running.lock().ok()?;
         let key = running.as_ref()?.key.clone();
         Some(RuntimeEndpoint {
@@ -141,11 +189,27 @@ impl RuntimeSupervisor {
     }
 
     pub fn start(&self, model_id: &str, ctx: u32) -> Result<RuntimeStatus, String> {
+        let _lifecycle = self
+            .inner
+            .lifecycle
+            .lock()
+            .map_err(|_| "Supervisor lifecycle state is unavailable.")?;
         if matches!(
             self.state().state,
             RuntimeState::Starting | RuntimeState::Ready
         ) {
             return Err("A runtime is already starting or running.".into());
+        }
+        if self
+            .inner
+            .running
+            .lock()
+            .map_err(|_| "Supervisor process state is unavailable.")?
+            .is_some()
+        {
+            return Err(
+                "A previous runtime process must be stopped before starting another.".into(),
+            );
         }
         let settings = runtime::load_settings(&self.inner.data_dir)?;
         let key = settings.default_runtime.ok_or_else(|| {
@@ -164,7 +228,8 @@ impl RuntimeSupervisor {
         let gpu_layers = gpu_layers_for_model(&self.inner.data_dir, model_id, ctx)?;
         let port = aangan_runtime::supervise::free_loopback_port()
             .map_err(|error| format!("could not reserve a loopback port: {error}"))?;
-        let api_key = random_key();
+        let api_key =
+            random_key().map_err(|error| format!("could not generate runtime API key: {error}"))?;
         let params = LaunchParams {
             exe: exe.clone(),
             model,
@@ -186,12 +251,7 @@ impl RuntimeSupervisor {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        for (name, _value) in env::vars_os() {
-            let name_text = name.to_string_lossy();
-            if is_blocked_env(&name_text) {
-                command.env_remove(name);
-            }
-        }
+        remove_blocked_env(&mut command);
         if key_mode == ApiKeyMode::Environment {
             for name in KEY_ENV_NAMES {
                 command.env(name, &api_key);
@@ -206,56 +266,117 @@ impl RuntimeSupervisor {
         let mut child = command
             .spawn()
             .map_err(|error| format!("could not start llama-server: {error}"))?;
+        let session_id = self.inner.next_session_id.fetch_add(1, Ordering::Relaxed);
+        let cancel_monitor = Arc::new(AtomicBool::new(false));
         #[cfg(windows)]
-        {
-            let job = KillOnCloseJob::new()
-                .map_err(|error| format!("could not create process kill switch: {error}"))?;
-            job.assign(&child).map_err(|error| {
-                format!("could not assign llama-server to kill switch: {error}")
-            })?;
-            if let Ok(mut job_guard) = self.inner.job.lock() {
-                *job_guard = Some(job);
+        let job = match KillOnCloseJob::new() {
+            Ok(job) => job,
+            Err(error) => {
+                return Err(abort_spawned_child(
+                    &mut child,
+                    "could not create process kill switch",
+                    error,
+                ));
             }
+        };
+        #[cfg(windows)]
+        if let Err(error) = job.assign(&child) {
+            return Err(abort_spawned_child(
+                &mut child,
+                "could not assign llama-server to kill switch",
+                error,
+            ));
         }
 
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
-        push_state(&self.inner, RuntimeState::Starting);
-        if let Ok(mut port_guard) = self.inner.port.lock() {
-            *port_guard = Some(port);
+        let process = RunningProcess {
+            session_id,
+            cancel_monitor: Arc::clone(&cancel_monitor),
+            child,
+            key: api_key.clone(),
+            #[cfg(windows)]
+            _job: job,
+        };
+        let mut running = match self.inner.running.lock() {
+            Ok(running) => running,
+            Err(_) => {
+                let mut process = process;
+                let cleanup = terminate_child_and_reap(&mut process.child);
+                return Err(format_cleanup_error(
+                    "Supervisor process state is unavailable.",
+                    cleanup,
+                ));
+            }
+        };
+        if running.is_some() {
+            let mut process = process;
+            let cleanup = terminate_child_and_reap(&mut process.child);
+            return Err(format_cleanup_error(
+                "A previous runtime process must be stopped before starting another.",
+                cleanup,
+            ));
         }
-        if let Ok(mut running) = self.inner.running.lock() {
-            *running = Some(RunningProcess {
-                child,
-                key: api_key.clone(),
-            });
+        let mut port_guard = match self.inner.port.lock() {
+            Ok(port_guard) => port_guard,
+            Err(_) => {
+                let mut process = process;
+                let cleanup = terminate_child_and_reap(&mut process.child);
+                return Err(format_cleanup_error(
+                    "Supervisor port state is unavailable.",
+                    cleanup,
+                ));
+            }
+        };
+        *port_guard = Some(port);
+        drop(port_guard);
+        *running = Some(process);
+        if !push_starting_state(&self.inner, session_id) {
+            if let Some(mut process) = running.take() {
+                process.cancel_monitor.store(true, Ordering::Release);
+                let _ = terminate_child_and_reap(&mut process.child);
+            }
+            if let Ok(mut port_guard) = self.inner.port.lock() {
+                *port_guard = None;
+            }
+            return Err("Supervisor state is unavailable.".into());
         }
+        drop(running);
         spawn_log_reader(&self.inner, stdout, api_key.clone());
         spawn_log_reader(&self.inner, stderr, api_key);
-        spawn_monitor(Arc::clone(&self.inner), port);
+        spawn_monitor(Arc::clone(&self.inner), session_id, cancel_monitor, port);
         Ok(self.state())
     }
 
     pub fn stop(&self) -> Result<RuntimeStatus, String> {
+        let _lifecycle = self
+            .inner
+            .lifecycle
+            .lock()
+            .map_err(|_| "Supervisor lifecycle state is unavailable.")?;
+        let mut running = self
+            .inner
+            .running
+            .lock()
+            .map_err(|_| "Supervisor process state is unavailable.")?;
+        let process = running.take();
+        if let Some(process) = &process {
+            process.cancel_monitor.store(true, Ordering::Release);
+        }
         push_state(&self.inner, RuntimeState::Stopping);
-        let child_result = self.inner.running.lock().map(|mut guard| guard.take());
-        let mut child = match child_result {
-            Ok(Some(process)) => process.child,
-            Ok(None) => {
-                push_state(&self.inner, RuntimeState::Stopped);
-                return Ok(self.state());
+        drop(running);
+
+        let Some(process) = process else {
+            if let Ok(mut port) = self.inner.port.lock() {
+                *port = None;
             }
-            Err(_) => {
-                return Err("Supervisor process state is unavailable.".into());
-            }
+            push_state(&self.inner, RuntimeState::Stopped);
+            return Ok(self.state());
         };
+        let mut child = process.child;
         let _ = child.kill();
         #[cfg(windows)]
-        {
-            if let Ok(mut job) = self.inner.job.lock() {
-                let _ = job.take();
-            }
-        }
+        drop(process._job);
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             match child.try_wait() {
@@ -307,15 +428,78 @@ impl RuntimeSupervisor {
 }
 
 fn push_state(inner: &SupervisorInner, state: RuntimeState) {
-    if let Ok(mut guard) = inner.state.lock() {
-        *guard = state.clone();
+    let Ok(mut guard) = inner.state.lock() else {
+        return;
+    };
+    guard.set_unowned(state.clone());
+    drop(guard);
+    emit_state(inner, state);
+}
+
+fn push_starting_state(inner: &SupervisorInner, session_id: u64) -> bool {
+    let Ok(mut guard) = inner.state.lock() else {
+        return false;
+    };
+    guard.start_session(session_id);
+    drop(guard);
+    emit_state(inner, RuntimeState::Starting);
+    true
+}
+
+fn push_state_for_session(
+    inner: &SupervisorInner,
+    session_id: u64,
+    state: RuntimeState,
+    finished: bool,
+) -> bool {
+    let Ok(mut guard) = inner.state.lock() else {
+        return false;
+    };
+    if !guard.update_session(session_id, state.clone(), finished) {
+        return false;
     }
+    drop(guard);
+    emit_state(inner, state);
+    true
+}
+
+fn emit_state(inner: &SupervisorInner, state: RuntimeState) {
     let status = RuntimeStatus {
+        api_key_visible: matches!(state, RuntimeState::Ready),
         state,
         port: inner.port.lock().ok().and_then(|guard| *guard),
-        api_key_visible: false,
     };
     let _ = inner.app.emit("runtime://state", status);
+}
+
+fn terminate_child_and_reap(child: &mut Child) -> Result<(), std::io::Error> {
+    let kill_result = child.kill();
+    match child.wait() {
+        Ok(_) => Ok(()),
+        Err(wait_error) => match kill_result {
+            Ok(()) => Err(wait_error),
+            Err(kill_error) => Err(std::io::Error::other(format!(
+                "kill failed: {kill_error}; wait failed: {wait_error}"
+            ))),
+        },
+    }
+}
+
+fn format_cleanup_error(context: &str, cleanup: Result<(), std::io::Error>) -> String {
+    match cleanup {
+        Ok(()) => context.to_string(),
+        Err(error) => format!("{context} Child cleanup failed: {error}"),
+    }
+}
+
+#[cfg(windows)]
+fn abort_spawned_child(child: &mut Child, context: &str, error: std::io::Error) -> String {
+    match terminate_child_and_reap(child) {
+        Ok(()) => format!("{context}: {error}"),
+        Err(cleanup_error) => {
+            format!("{context}: {error}; could not terminate/reap child: {cleanup_error}")
+        }
+    }
 }
 
 fn push_log(inner: &SupervisorInner, line: &str) {
@@ -359,68 +543,166 @@ fn spawn_log_reader(
     });
 }
 
-fn spawn_monitor(inner: Arc<SupervisorInner>, port: u16) {
+fn spawn_monitor(
+    inner: Arc<SupervisorInner>,
+    session_id: u64,
+    cancel_monitor: Arc<AtomicBool>,
+    port: u16,
+) {
     thread::spawn(move || {
         let deadline = Instant::now() + HEALTH_TIMEOUT;
+        let mut ready = false;
         loop {
-            thread::sleep(Duration::from_millis(500));
-            match inner.running.lock() {
-                Ok(mut guard) => {
-                    let exited = guard
-                        .as_mut()
-                        .and_then(|process| process.child.try_wait().ok().flatten());
-                    if let Some(status) = exited {
-                        let logs = inner
-                            .logs
-                            .lock()
-                            .map(|guard| guard.iter().rev().take(20).rev().cloned().collect())
-                            .unwrap_or_default();
-                        *guard = None;
-                        push_state(
-                            &inner,
-                            RuntimeState::Failed {
-                                exit_code: status.code(),
-                                last_lines: logs,
-                            },
-                        );
-                        return;
-                    }
-                }
-                Err(_) => return,
+            if cancel_monitor.load(Ordering::Acquire) {
+                return;
             }
-            match loopback_status(port, "/health", Duration::from_millis(800)) {
-                Ok(200) => {
-                    push_state(&inner, RuntimeState::Ready);
+            thread::sleep(Duration::from_millis(500));
+            if cancel_monitor.load(Ordering::Acquire) {
+                return;
+            }
+
+            let mut running = match inner.running.lock() {
+                Ok(running) => running,
+                Err(_) => return,
+            };
+            let process_status = {
+                let Some(process) = running.as_mut() else {
+                    return;
+                };
+                if process.session_id != session_id
+                    || process.cancel_monitor.load(Ordering::Acquire)
+                {
                     return;
                 }
-                Ok(503) => {}
-                Ok(_) => {}
-                Err(_) => {}
-            }
-            if Instant::now() >= deadline {
-                let logs = inner
-                    .logs
-                    .lock()
-                    .map(|guard| guard.iter().rev().take(20).rev().cloned().collect())
-                    .unwrap_or_default();
-                if let Ok(mut guard) = inner.running.lock()
-                    && let Some(process) = guard.take()
-                {
-                    let mut child = process.child;
-                    let _ = child.kill();
-                    let _ = child.wait();
+                process.child.try_wait()
+            };
+            match process_status {
+                Ok(Some(status)) => {
+                    let process = running.take();
+                    let logs = recent_logs(&inner);
+                    if let Ok(mut current_port) = inner.port.lock() {
+                        *current_port = None;
+                    }
+                    push_state_for_session(
+                        &inner,
+                        session_id,
+                        RuntimeState::Failed {
+                            exit_code: status.code(),
+                            last_lines: logs,
+                        },
+                        true,
+                    );
+                    drop(process);
+                    return;
                 }
-                push_state(
-                    &inner,
-                    RuntimeState::Failed {
-                        exit_code: None,
-                        last_lines: logs,
-                    },
-                );
-                return;
+                Err(error) => {
+                    let Some(mut process) = running.take() else {
+                        return;
+                    };
+                    process.cancel_monitor.store(true, Ordering::Release);
+                    push_log(
+                        &inner,
+                        &format!("Could not monitor llama-server process: {error}"),
+                    );
+                    if let Err(cleanup_error) = terminate_child_and_reap(&mut process.child) {
+                        push_log(
+                            &inner,
+                            &format!("Could not terminate llama-server process: {cleanup_error}"),
+                        );
+                    }
+                    let logs = recent_logs(&inner);
+                    if let Ok(mut current_port) = inner.port.lock() {
+                        *current_port = None;
+                    }
+                    push_state_for_session(
+                        &inner,
+                        session_id,
+                        RuntimeState::Failed {
+                            exit_code: None,
+                            last_lines: logs,
+                        },
+                        true,
+                    );
+                    drop(process);
+                    return;
+                }
+                Ok(None) => {}
+            }
+
+            drop(running);
+            if !ready {
+                if matches!(
+                    loopback_status(port, "/health", Duration::from_millis(800)),
+                    Ok(200)
+                ) {
+                    let running = match inner.running.lock() {
+                        Ok(running) => running,
+                        Err(_) => return,
+                    };
+                    let Some(process) = running.as_ref() else {
+                        return;
+                    };
+                    if process.session_id != session_id
+                        || process.cancel_monitor.load(Ordering::Acquire)
+                        || cancel_monitor.load(Ordering::Acquire)
+                        || !push_state_for_session(&inner, session_id, RuntimeState::Ready, false)
+                    {
+                        return;
+                    }
+                    ready = true;
+                }
+
+                if !ready && Instant::now() >= deadline {
+                    let mut running = match inner.running.lock() {
+                        Ok(running) => running,
+                        Err(_) => return,
+                    };
+                    let Some(process) = running.as_ref() else {
+                        return;
+                    };
+                    if process.session_id != session_id
+                        || process.cancel_monitor.load(Ordering::Acquire)
+                        || cancel_monitor.load(Ordering::Acquire)
+                    {
+                        return;
+                    }
+                    let Some(mut process) = running.take() else {
+                        return;
+                    };
+                    process.cancel_monitor.store(true, Ordering::Release);
+                    if let Err(error) = terminate_child_and_reap(&mut process.child) {
+                        push_log(
+                            &inner,
+                            &format!("Could not terminate llama-server: {error}"),
+                        );
+                    }
+                    let logs = recent_logs(&inner);
+                    if let Ok(mut current_port) = inner.port.lock() {
+                        *current_port = None;
+                    }
+                    push_state_for_session(
+                        &inner,
+                        session_id,
+                        RuntimeState::Failed {
+                            exit_code: None,
+                            last_lines: logs,
+                        },
+                        true,
+                    );
+                    drop(process);
+                    return;
+                }
             }
         }
     });
+}
+
+fn recent_logs(inner: &SupervisorInner) -> Vec<String> {
+    inner
+        .logs
+        .lock()
+        .map(|guard| guard.iter().rev().take(20).rev().cloned().collect())
+        .unwrap_or_default()
 }
 
 fn find_downloaded_model(data_dir: &Path, model_id: &str) -> Result<PathBuf, String> {
@@ -498,5 +780,66 @@ mod tests {
             logs.back().map(String::as_str),
             Some(format!("line-{}", LOG_LIMIT + 24).as_str())
         );
+    }
+
+    #[test]
+    fn failed_state_serializes_camel_case_fields() {
+        let state = RuntimeState::Failed {
+            exit_code: Some(23),
+            last_lines: vec!["server exited".into()],
+        };
+
+        assert_eq!(
+            serde_json::to_value(state).expect("serialize failed state"),
+            serde_json::json!({
+                "kind": "failed",
+                "exitCode": 23,
+                "lastLines": ["server exited"]
+            })
+        );
+    }
+
+    #[test]
+    fn stale_session_cannot_change_replacement_state() {
+        let mut state = SupervisorState::new();
+        state.start_session(1);
+        state.set_unowned(RuntimeState::Stopped);
+        state.start_session(2);
+
+        assert!(!state.update_session(
+            1,
+            RuntimeState::Failed {
+                exit_code: Some(1),
+                last_lines: vec![],
+            },
+            true,
+        ));
+        assert!(matches!(state.state, RuntimeState::Starting));
+        assert_eq!(state.session_id, Some(2));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn failed_job_setup_terminates_and_reaps_spawned_child() {
+        let mut child = Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Start-Sleep -Seconds 30",
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn test process");
+
+        let message = abort_spawned_child(
+            &mut child,
+            "could not assign llama-server to kill switch",
+            std::io::Error::other("test failure"),
+        );
+
+        assert!(message.contains("could not assign llama-server to kill switch"));
+        assert!(child.try_wait().expect("wait for child").is_some());
     }
 }

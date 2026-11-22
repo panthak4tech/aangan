@@ -4,7 +4,9 @@ import packageMetadata from "../../package.json";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cancelDownload,
+  clearRuntimeLogs,
   copyHardwareReport,
+  copyRuntimeDiagnostics,
   clearNetworkActivity,
   chooseModelFolder,
   deleteStorageFile,
@@ -13,10 +15,16 @@ import {
   getModelFolder,
   getNetworkActivity,
   getNetworkState,
+  getRuntimeEndpoint,
+  getRuntimeLogs,
+  getRuntimeStatus,
   getStorageInfo,
   listenNetworkState,
   listenDownloadProgress,
+  listenRuntimeLogs,
+  listenRuntimeState,
   listDownloads,
+  listRuntimes,
   openModelFileFolder,
   openModelFolder,
   pauseDownload,
@@ -33,8 +41,10 @@ import {
   setModelFolder,
   setSubscribedFamilies,
   startDownload,
+  startRuntime,
+  stopRuntime,
 } from "@/api/api";
-import type { DownloadProgress, HardwareProfile, StorageInfo } from "@/api/types";
+import type { DownloadProgress, HardwareProfile, RuntimeStatus, StorageInfo } from "@/api/types";
 import { MODELS, PRESETS } from "@/api/presets";
 import { rankModels } from "@/api/estimate";
 import { en } from "@/i18n/en";
@@ -42,6 +52,7 @@ import { ModelsView } from "@/app/views/ModelsView";
 import { ScanView } from "@/app/views/ScanView";
 import { SettingsView } from "@/app/views/SettingsView";
 import { DownloadsButton, DownloadsDrawer } from "@/app/downloads/DownloadsDrawer";
+import { RuntimeRunCard } from "@/app/models/RuntimeRunCard";
 import { FirstRunWizard } from "@/app/wizard/FirstRunWizard";
 import { TooltipProvider } from "@/components/primitives/tooltip";
 import { ToastProvider } from "@/components/ui/toast-provider";
@@ -57,7 +68,9 @@ vi.mock("@/api/api", async () => {
   const { default: metadata } = await import("../../package.json");
   return {
     cancelDownload: vi.fn(),
+    clearRuntimeLogs: vi.fn(),
     copyHardwareReport: vi.fn(),
+    copyRuntimeDiagnostics: vi.fn(),
     clearNetworkActivity: vi.fn(),
     chooseModelFolder: vi.fn(),
     deleteStorageFile: vi.fn(),
@@ -66,10 +79,16 @@ vi.mock("@/api/api", async () => {
     getModelFolder: vi.fn(),
     getNetworkActivity: vi.fn(),
     getNetworkState: vi.fn(),
+    getRuntimeEndpoint: vi.fn(),
+    getRuntimeLogs: vi.fn(),
+    getRuntimeStatus: vi.fn(),
     getStorageInfo: vi.fn(),
     listenNetworkState: vi.fn(),
     listenDownloadProgress: vi.fn(),
+    listenRuntimeLogs: vi.fn(),
+    listenRuntimeState: vi.fn(),
     listDownloads: vi.fn(),
+    listRuntimes: vi.fn(),
     openModelFileFolder: vi.fn(),
     openModelFolder: vi.fn(),
     pauseDownload: vi.fn(),
@@ -86,6 +105,8 @@ vi.mock("@/api/api", async () => {
     setModelFolder: vi.fn(),
     setSubscribedFamilies: vi.fn(),
     startDownload: vi.fn(),
+    startRuntime: vi.fn(),
+    stopRuntime: vi.fn(),
     APP_INFO: {
       version: metadata.version,
       license: "MIT",
@@ -159,6 +180,28 @@ beforeEach(() => {
     etaSecs: null,
   }));
   vi.mocked(getModelFolder).mockResolvedValue("C:\\models");
+  const stoppedRuntime: RuntimeStatus = {
+    state: { kind: "stopped" },
+    port: null,
+    apiKeyVisible: false,
+  };
+  vi.mocked(getRuntimeEndpoint).mockResolvedValue(null);
+  vi.mocked(getRuntimeLogs).mockResolvedValue([]);
+  vi.mocked(getRuntimeStatus).mockResolvedValue(stoppedRuntime);
+  vi.mocked(listRuntimes).mockResolvedValue({
+    generatedAt: "2026-10-21T13:30:00Z",
+    signatureVerified: false,
+    warning: null,
+    updateStatus: null,
+    defaultRuntime: null,
+    runtimes: [],
+  });
+  vi.mocked(listenRuntimeLogs).mockResolvedValue(vi.fn());
+  vi.mocked(listenRuntimeState).mockResolvedValue(vi.fn());
+  vi.mocked(startRuntime).mockResolvedValue(stoppedRuntime);
+  vi.mocked(stopRuntime).mockResolvedValue(stoppedRuntime);
+  vi.mocked(clearRuntimeLogs).mockResolvedValue();
+  vi.mocked(copyRuntimeDiagnostics).mockResolvedValue("");
   vi.mocked(listDownloads).mockResolvedValue([]);
   vi.mocked(listenDownloadProgress).mockResolvedValue(vi.fn());
   vi.mocked(chooseModelFolder).mockResolvedValue(null);
@@ -679,6 +722,124 @@ describe("ModelsView", () => {
     expect(
       await screen.findByText(en.views.models.catalogWarning("settings unavailable")),
     ).toBeInTheDocument();
+  });
+});
+
+describe("RuntimeRunCard", () => {
+  it("unlistens event handlers that finish registering after unmount", async () => {
+    let resolveState: ((unlisten: () => void) => void) | undefined;
+    let resolveLogs: ((unlisten: () => void) => void) | undefined;
+    vi.mocked(listenRuntimeState).mockImplementation(() => new Promise((resolve) => {
+      resolveState = resolve;
+    }));
+    vi.mocked(listenRuntimeLogs).mockImplementation(() => new Promise((resolve) => {
+      resolveLogs = resolve;
+    }));
+
+    const { unmount } = render(
+      <DownloadsProvider>
+        <RuntimeRunCard modelId="model" context={4096} />
+      </DownloadsProvider>,
+    );
+    await waitFor(() => {
+      expect(resolveState).toBeDefined();
+      expect(resolveLogs).toBeDefined();
+    });
+
+    const unlistenState = vi.fn();
+    const unlistenLogs = vi.fn();
+    await act(async () => {
+      unmount();
+      resolveState?.(unlistenState);
+      resolveLogs?.(unlistenLogs);
+      await Promise.resolve();
+    });
+
+    expect(unlistenState).toHaveBeenCalledOnce();
+    expect(unlistenLogs).toHaveBeenCalledOnce();
+  });
+
+  it("cleans up a successful listener when the other registration fails", async () => {
+    const unlistenState = vi.fn();
+    vi.mocked(listenRuntimeState).mockResolvedValue(unlistenState);
+    vi.mocked(listenRuntimeLogs).mockRejectedValue(new Error("log listener unavailable"));
+
+    const { unmount } = render(
+      <DownloadsProvider>
+        <RuntimeRunCard modelId="model" context={4096} />
+      </DownloadsProvider>,
+    );
+
+    expect(await screen.findByText("log listener unavailable")).toBeInTheDocument();
+    unmount();
+    expect(unlistenState).toHaveBeenCalledOnce();
+  });
+
+  it("keeps received logs while auto-scroll is paused and copies them", async () => {
+    let emitLog: ((line: string) => void) | undefined;
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    vi.mocked(listenRuntimeLogs).mockImplementation(async (onLog) => {
+      emitLog = onLog;
+      return () => undefined;
+    });
+    const { container } = render(
+      <DownloadsProvider>
+        <RuntimeRunCard modelId="model" context={4096} />
+      </DownloadsProvider>,
+    );
+
+    fireEvent.click(screen.getByText("Logs"));
+    const pauseButton = await screen.findByRole("button", { name: "Pause auto-scroll" });
+    await waitFor(() => expect(emitLog).toBeDefined());
+    const logPane = container.querySelector("pre");
+    if (!logPane) throw new Error("Runtime log pane was not rendered.");
+    Object.defineProperty(logPane, "scrollHeight", { configurable: true, value: 1000 });
+
+    fireEvent.click(pauseButton);
+    expect(screen.getByRole("button", { name: "Resume auto-scroll" })).toBeInTheDocument();
+    logPane.scrollTop = 0;
+    act(() => emitLog?.("received while paused"));
+    expect(logPane).toHaveTextContent("received while paused");
+    expect(logPane.scrollTop).toBe(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Resume auto-scroll" }));
+    expect(logPane.scrollTop).toBe(1000);
+    act(() => emitLog?.("received after resume"));
+    expect(logPane).toHaveTextContent("received while paused");
+    expect(logPane).toHaveTextContent("received after resume");
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith("received while paused\nreceived after resume");
+    });
+  });
+
+  it("renders a failed-state event with the serialized exit code", async () => {
+    let emitState: ((status: RuntimeStatus) => void) | undefined;
+    vi.mocked(listenRuntimeState).mockImplementation(async (onState) => {
+      emitState = onState;
+      return () => undefined;
+    });
+    render(
+      <DownloadsProvider>
+        <RuntimeRunCard modelId="model" context={4096} />
+      </DownloadsProvider>,
+    );
+    await waitFor(() => expect(emitState).toBeDefined());
+
+    act(() => {
+      emitState?.({
+        state: { kind: "failed", exitCode: 23, lastLines: ["server exited"] },
+        port: null,
+        apiKeyVisible: false,
+      });
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("llama-server failed (exit code 23).");
   });
 });
 
