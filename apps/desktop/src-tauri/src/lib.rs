@@ -843,6 +843,20 @@ mod tests {
     }
 
     #[test]
+    fn installer_removes_aangan_local_data_when_requested() {
+        let installer = include_str!("../installer.nsi");
+        let data_cleanup = installer
+            .split("; Delete app data if the checkbox is selected")
+            .nth(1)
+            .and_then(|section| section.split("!ifmacrodef NSIS_HOOK_POSTUNINSTALL").next())
+            .expect("app-data cleanup section");
+
+        assert!(data_cleanup.contains("${If} $DeleteAppDataCheckboxState = 1"));
+        assert!(data_cleanup.contains("${AndIf} $UpdateMode <> 1"));
+        assert!(data_cleanup.contains(r#"RmDir /r "$LOCALAPPDATA\${PRODUCTNAME}""#));
+    }
+
+    #[test]
     fn installer_shortcuts_use_the_desktop_executable_icon() {
         let installer = include_str!("../installer.nsi");
         assert!(

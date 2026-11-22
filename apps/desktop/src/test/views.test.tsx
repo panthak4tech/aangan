@@ -817,6 +817,7 @@ describe("DownloadsDrawer", () => {
       </DownloadsProvider>,
     );
 
+    expect(screen.getByRole("dialog").className).toContain("content-start");
     expect(await screen.findByText(en.views.downloads.savedTo("C:\\models"))).toBeInTheDocument();
     expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "50");
     fireEvent.click(screen.getByRole("button", { name: en.views.downloads.openFolder }));

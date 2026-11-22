@@ -73,7 +73,7 @@ export function DownloadsDrawer({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="left-auto right-0 top-0 h-dvh max-h-screen w-full max-w-xl translate-x-0 translate-y-0 overflow-y-auto rounded-none p-6 sm:rounded-none">
+      <DialogContent className="left-auto right-0 top-0 h-dvh max-h-screen w-full max-w-xl translate-x-0 translate-y-0 overflow-y-auto rounded-none p-6 content-start sm:rounded-none">
         <DialogHeader className="pr-8 text-left">
           <DialogTitle>{t.title}</DialogTitle>
           <DialogDescription>{t.description}</DialogDescription>

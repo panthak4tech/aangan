@@ -122,11 +122,20 @@ ManifestDPIAwareness PerMonitorV2
               System::Call '*$R9(&w256 .r7)'
               ${If} $7 == "${productName}"
                 ExecWait '"$SYSDIR\taskkill.exe" /PID $4 /F' $R8
-                nsis_tauri_utils::FindProcessCurrentUser "$4"
-                Pop $R8
-                ${If} $R8 != 0
-                  Goto app_check_abort_${UniqueID}
-                ${EndIf}
+                StrCpy $R7 20
+                verify_process_exit_${UniqueID}:
+                  nsis_tauri_utils::FindProcessCurrentUser "$4"
+                  Pop $R8
+                  ${If} $R8 = 0
+                    Goto process_exit_verified_${UniqueID}
+                  ${EndIf}
+                  IntOp $R7 $R7 - 1
+                  ${If} $R7 <= 0
+                    Goto app_check_abort_${UniqueID}
+                  ${EndIf}
+                  Sleep 250
+                  Goto verify_process_exit_${UniqueID}
+                process_exit_verified_${UniqueID}:
               ${EndIf}
               IntOp $R6 $R6 + 1
               ${If} $R6 < $2
@@ -1238,6 +1247,7 @@ Section Uninstall
     SetShellVarContext current
     RmDir /r "$APPDATA\${BUNDLEID}"
     RmDir /r "$LOCALAPPDATA\${BUNDLEID}"
+    RmDir /r "$LOCALAPPDATA\${PRODUCTNAME}"
   ${EndIf}
 
   !ifmacrodef NSIS_HOOK_POSTUNINSTALL
