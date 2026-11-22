@@ -14,7 +14,9 @@ import type {
   NetworkState,
   Recommendation,
   RuntimeCatalog,
+  RuntimeEndpoint,
   RuntimeInstallResult,
+  RuntimeStatus,
   StorageInfo,
 } from "./types";
 
@@ -181,6 +183,55 @@ export async function listenRuntimeProgress(
 ): Promise<UnlistenFn> {
   if (!inTauri) return () => {};
   return listen<DownloadProgress>("runtimes://progress", (event) => onProgress(event.payload));
+}
+
+export async function startRuntime(modelId: string, ctx = 4096): Promise<RuntimeStatus> {
+  if (!inTauri) return { state: { kind: "stopped" }, port: null, apiKeyVisible: false };
+  return invoke<RuntimeStatus>("runtime_start", { modelId, ctx });
+}
+
+export async function stopRuntime(): Promise<RuntimeStatus> {
+  if (!inTauri) return { state: { kind: "stopped" }, port: null, apiKeyVisible: false };
+  return invoke<RuntimeStatus>("runtime_stop");
+}
+
+export async function getRuntimeStatus(): Promise<RuntimeStatus> {
+  if (!inTauri) return { state: { kind: "stopped" }, port: null, apiKeyVisible: false };
+  return invoke<RuntimeStatus>("runtime_status");
+}
+
+export async function getRuntimeLogs(): Promise<string[]> {
+  if (!inTauri) return [];
+  return invoke<string[]>("runtime_logs");
+}
+
+export async function clearRuntimeLogs(): Promise<void> {
+  if (!inTauri) return;
+  return invoke<void>("runtime_clear_logs");
+}
+
+export async function copyRuntimeDiagnostics(): Promise<string> {
+  if (!inTauri) return "";
+  return invoke<string>("runtime_copy_diagnostics");
+}
+
+export async function getRuntimeEndpoint(): Promise<RuntimeEndpoint | null> {
+  if (!inTauri) return null;
+  return invoke<RuntimeEndpoint | null>("runtime_endpoint");
+}
+
+export async function listenRuntimeState(
+  onState: (status: RuntimeStatus) => void,
+): Promise<UnlistenFn> {
+  if (!inTauri) return () => {};
+  return listen<RuntimeStatus>("runtime://state", (event) => onState(event.payload));
+}
+
+export async function listenRuntimeLogs(
+  onLog: (line: string) => void,
+): Promise<UnlistenFn> {
+  if (!inTauri) return () => {};
+  return listen<string>("runtime://log", (event) => onLog(event.payload));
 }
 
 export async function startDownload(

@@ -30,9 +30,13 @@ does not allow arbitrary lookalike domains.
 
 The chip and activity log cover Aangan's gated requests only; they are not a
 system-wide network monitor and do not report other applications' traffic.
-Local connections to a runtime do not appear in this log. Aangan does not
-currently supervise runtime processes or enforce loopback-only runtime
-bindings.
+Local connections to a supervised runtime do not appear in this log. Runtime
+processes bind only to `127.0.0.1` on a random port and receive a random
+per-session API key.
+
+Corporate proxy settings may affect gated downloads. Proxy variables are
+removed from llama-server processes, and loopback runtime traffic is handled
+directly by Aangan rather than through the network gate.
 
 The **Network access details** link in Settings opens this document in the
 system browser. That browser request happens only after the user selects the

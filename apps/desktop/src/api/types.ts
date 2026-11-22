@@ -134,6 +134,24 @@ export interface RuntimeInstallResult {
   warning: string | null;
 }
 
+export type RuntimeProcessState =
+  | { kind: "stopped" }
+  | { kind: "starting" }
+  | { kind: "ready" }
+  | { kind: "stopping" }
+  | { kind: "failed"; exitCode: number | null; lastLines: string[] };
+
+export interface RuntimeStatus {
+  state: RuntimeProcessState;
+  port: number | null;
+  apiKeyVisible: boolean;
+}
+
+export interface RuntimeEndpoint {
+  baseUrl: string;
+  key: string;
+}
+
 export interface GpuInfo {
   name: string;
   vendor: GpuVendor;

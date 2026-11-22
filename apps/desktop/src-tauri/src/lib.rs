@@ -224,6 +224,58 @@ async fn runtime_set_default(
     .map_err(|error| error.to_string())?
 }
 
+#[tauri::command]
+fn runtime_start(
+    supervisor: State<'_, Arc<runtime::supervisor::RuntimeSupervisor>>,
+    model_id: String,
+    ctx: Option<u32>,
+) -> Result<runtime::supervisor::RuntimeStatus, String> {
+    supervisor.start(&model_id, ctx.unwrap_or(4096))
+}
+
+#[tauri::command]
+fn runtime_stop(
+    supervisor: State<'_, Arc<runtime::supervisor::RuntimeSupervisor>>,
+) -> Result<runtime::supervisor::RuntimeStatus, String> {
+    supervisor.stop()
+}
+
+#[tauri::command]
+fn runtime_status(
+    supervisor: State<'_, Arc<runtime::supervisor::RuntimeSupervisor>>,
+) -> Result<runtime::supervisor::RuntimeStatus, String> {
+    Ok(supervisor.state())
+}
+
+#[tauri::command]
+fn runtime_logs(
+    supervisor: State<'_, Arc<runtime::supervisor::RuntimeSupervisor>>,
+) -> Result<Vec<String>, String> {
+    Ok(supervisor.logs())
+}
+
+#[tauri::command]
+fn runtime_copy_diagnostics(
+    supervisor: State<'_, Arc<runtime::supervisor::RuntimeSupervisor>>,
+) -> Result<String, String> {
+    Ok(supervisor.copy_diagnostics())
+}
+
+#[tauri::command]
+fn runtime_endpoint(
+    supervisor: State<'_, Arc<runtime::supervisor::RuntimeSupervisor>>,
+) -> Result<Option<runtime::supervisor::RuntimeEndpoint>, String> {
+    Ok(supervisor.endpoint())
+}
+
+#[tauri::command]
+fn runtime_clear_logs(
+    supervisor: State<'_, Arc<runtime::supervisor::RuntimeSupervisor>>,
+) -> Result<(), String> {
+    supervisor.clear_logs();
+    Ok(())
+}
+
 async fn restore_downloads(
     manager: &downloads::DownloadManager,
     data_dir: &Path,
@@ -554,6 +606,13 @@ pub fn run() -> Result<(), tauri::Error> {
             runtime_install,
             runtime_remove,
             runtime_set_default,
+            runtime_start,
+            runtime_stop,
+            runtime_status,
+            runtime_logs,
+            runtime_clear_logs,
+            runtime_copy_diagnostics,
+            runtime_endpoint,
             download_model,
             download_pause,
             download_resume,
@@ -624,6 +683,11 @@ pub fn run() -> Result<(), tauri::Error> {
                     eprintln!("could not restore model download state: {error}");
                 }
             });
+            let supervisor = Arc::new(runtime::supervisor::RuntimeSupervisor::new(
+                app.handle().clone(),
+                data_dir,
+            ));
+            app.manage(supervisor);
             app.manage(gate);
             app.manage(downloads);
             #[cfg(windows)]
@@ -638,6 +702,11 @@ pub fn run() -> Result<(), tauri::Error> {
         })
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+                if let Some(supervisor) =
+                    window.try_state::<Arc<runtime::supervisor::RuntimeSupervisor>>()
+                {
+                    let _ = supervisor.stop();
+                }
                 window.app_handle().exit(0);
             }
         })
