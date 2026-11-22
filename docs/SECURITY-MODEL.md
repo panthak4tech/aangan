@@ -5,8 +5,9 @@ The runtime receives a cryptographically random, per-session API key. Aangan pre
 the `LLAMA_API_KEY` or `LLAMA_ARG_API_KEY` environment variables when the runtime's help
 output advertises support. If the runtime instead advertises only `--api-key`, Aangan
 uses that compatibility fallback, which can expose the key to same-user process
-inspection. If the help probe fails or advertises neither option, Aangan uses the
-environment-variable method. Aangan does not expose the server beyond the PC.
+inspection. If a help probe fails or times out, startup stops rather than guessing a
+key-delivery method. Successful help output that advertises neither option continues
+to use the environment-variable method. Aangan does not expose the server beyond the PC.
 
 On Windows, the runtime process is assigned to a Job Object configured with
 `KILL_ON_JOB_CLOSE`. The application stops the process tree on its Stop action and the

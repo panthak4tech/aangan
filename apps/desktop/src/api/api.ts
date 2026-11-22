@@ -16,6 +16,7 @@ import type {
   RuntimeCatalog,
   RuntimeEndpoint,
   RuntimeInstallResult,
+  RuntimeLogEntry,
   RuntimeStatus,
   StorageInfo,
 } from "./types";
@@ -200,9 +201,9 @@ export async function getRuntimeStatus(): Promise<RuntimeStatus> {
   return invoke<RuntimeStatus>("runtime_status");
 }
 
-export async function getRuntimeLogs(): Promise<string[]> {
+export async function getRuntimeLogs(): Promise<RuntimeLogEntry[]> {
   if (!inTauri) return [];
-  return invoke<string[]>("runtime_logs");
+  return invoke<RuntimeLogEntry[]>("runtime_logs");
 }
 
 export async function clearRuntimeLogs(): Promise<void> {
@@ -228,10 +229,10 @@ export async function listenRuntimeState(
 }
 
 export async function listenRuntimeLogs(
-  onLog: (line: string) => void,
+  onLog: (entry: RuntimeLogEntry) => void,
 ): Promise<UnlistenFn> {
   if (!inTauri) return () => {};
-  return listen<string>("runtime://log", (event) => onLog(event.payload));
+  return listen<RuntimeLogEntry>("runtime://log", (event) => onLog(event.payload));
 }
 
 export async function startDownload(

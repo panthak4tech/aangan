@@ -252,7 +252,7 @@ fn runtime_status(
 #[tauri::command]
 fn runtime_logs(
     supervisor: State<'_, Arc<runtime::supervisor::RuntimeSupervisor>>,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<runtime::supervisor::RuntimeLogEntry>, String> {
     Ok(supervisor.logs())
 }
 
@@ -875,17 +875,22 @@ mod tests {
         let cleanup_call = installer
             .find(r#"-File "$INSTDIR\safe-delete-appdata.ps1""#)
             .expect("reparse-safe cleanup helper call");
+        let path_cleanup_call = installer
+            .find(r#"-Action Remove -InstallDir "$INSTDIR" -MarkerKey "${UNINSTKEY}""#)
+            .expect("CLI PATH cleanup call");
         let install_directory_deletion = installer
             .find("; Delete the app directory and its content from disk")
             .expect("app-directory cleanup section");
 
         assert!(checked_data_deletion < update_guard);
         assert!(update_guard < cleanup_call);
+        assert!(path_cleanup_call < cleanup_call);
         assert!(cleanup_call < install_directory_deletion);
         assert!(!installer.contains(r#"RmDir /r "$LOCALAPPDATA\${PRODUCTNAME}""#));
         let cleanup_script = include_str!("../safe-delete-appdata.ps1");
         assert!(cleanup_script.contains("[System.IO.FileAttributes]::ReparsePoint"));
         assert!(cleanup_script.contains("[System.IO.Directory]::EnumerateFileSystemEntries"));
+        assert!(cleanup_script.contains("$ExcludedPath"));
     }
 
     #[cfg(windows)]
@@ -915,8 +920,9 @@ mod tests {
                 String::from_utf8_lossy(&output.stderr)
             );
         };
-        let run_cleanup = |data_path: &Path| {
-            Command::new("powershell.exe")
+        let run_cleanup = |data_path: &Path, excluded_path: Option<&Path>| {
+            let mut command = Command::new("powershell.exe");
+            command
                 .args([
                     "-NoProfile",
                     "-NonInteractive",
@@ -930,9 +936,11 @@ mod tests {
                 .arg("-LocalDataPath")
                 .arg(&absent_local)
                 .arg("-AanganDataPath")
-                .arg(data_path)
-                .output()
-                .expect("run safe app-data cleanup")
+                .arg(data_path);
+            if let Some(excluded_path) = excluded_path {
+                command.arg("-ExcludedPath").arg(excluded_path);
+            }
+            command.output().expect("run safe app-data cleanup")
         };
 
         let app_data = directory.path().join("Aangan");
@@ -943,7 +951,7 @@ mod tests {
         std::fs::write(&model, b"external model").expect("external model file");
         create_junction(&app_data.join("models"), &external_models);
 
-        let output = run_cleanup(&app_data);
+        let output = run_cleanup(&app_data, None);
 
         assert!(
             output.status.success(),
@@ -960,7 +968,7 @@ mod tests {
         std::fs::write(&external_marker, b"external data").expect("external marker file");
         create_junction(&app_data_junction, &external_app_data);
 
-        let output = run_cleanup(&app_data_junction);
+        let output = run_cleanup(&app_data_junction, None);
         assert!(
             output.status.success(),
             "root junction cleanup failed: {}",
@@ -968,6 +976,25 @@ mod tests {
         );
         assert!(!app_data_junction.exists());
         assert!(external_marker.exists());
+
+        let install_data = directory.path().join("Aangan-with-uninstaller");
+        let cached_data = install_data.join("models");
+        let uninstaller = install_data.join("uninstall.exe");
+        std::fs::create_dir_all(&cached_data).expect("install data directory");
+        std::fs::write(cached_data.join("model.gguf"), b"managed model")
+            .expect("managed model file");
+        std::fs::write(&uninstaller, b"running uninstaller").expect("uninstaller placeholder");
+
+        let output = run_cleanup(&install_data, Some(&uninstaller));
+
+        assert!(
+            output.status.success(),
+            "cleanup with an excluded uninstaller failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(install_data.exists());
+        assert!(uninstaller.exists());
+        assert!(!cached_data.exists());
     }
 
     #[test]

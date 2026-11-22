@@ -44,7 +44,13 @@ import {
   startRuntime,
   stopRuntime,
 } from "@/api/api";
-import type { DownloadProgress, HardwareProfile, RuntimeStatus, StorageInfo } from "@/api/types";
+import type {
+  DownloadProgress,
+  HardwareProfile,
+  RuntimeLogEntry,
+  RuntimeStatus,
+  StorageInfo,
+} from "@/api/types";
 import { MODELS, PRESETS } from "@/api/presets";
 import { rankModels } from "@/api/estimate";
 import { en } from "@/i18n/en";
@@ -726,6 +732,102 @@ describe("ModelsView", () => {
 });
 
 describe("RuntimeRunCard", () => {
+  it("shows a retryable error when the runtime catalog cannot be loaded", async () => {
+    vi.mocked(listRuntimes).mockRejectedValueOnce(new Error("catalog unavailable"));
+    render(
+      <DownloadsProvider>
+        <RuntimeRunCard modelId="model" context={4096} />
+      </DownloadsProvider>,
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      en.views.models.runtimeCatalogLoadFailed("catalog unavailable"),
+    );
+    expect(screen.queryByText(/No runtime is installed/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: en.views.models.retry }));
+
+    expect(await screen.findByText(/No runtime is installed/)).toBeInTheDocument();
+  });
+
+  it("requires the selected default runtime to be installed before enabling Start", async () => {
+    vi.mocked(listDownloads).mockResolvedValue([{
+      id: "model",
+      state: { kind: "done" },
+      done: 1024,
+      total: 1024,
+      bytesPerSec: 0,
+      etaSecs: null,
+    }]);
+    vi.mocked(listRuntimes).mockResolvedValueOnce({
+      generatedAt: "2026-10-21T13:30:00Z",
+      signatureVerified: false,
+      warning: null,
+      updateStatus: null,
+      defaultRuntime: null,
+      runtimes: [{
+        id: "llama.cpp",
+        displayName: "llama.cpp",
+        version: "1",
+        license: "MIT",
+        homepage: "",
+        recommendedVariant: null,
+        recommendationReason: "",
+        variants: [],
+        installed: [{
+          runtimeId: "llama.cpp",
+          version: "1",
+          variant: "cpu",
+          path: "runtime",
+          sizeBytes: 1,
+          isDefault: false,
+        }],
+      }],
+    });
+    render(
+      <DownloadsProvider>
+        <RuntimeRunCard modelId="model" context={4096} />
+      </DownloadsProvider>,
+    );
+
+    expect(await screen.findByText(en.views.models.selectDefaultRuntime)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start" })).toBeDisabled();
+  });
+
+  it("does not let a delayed status snapshot replace a newer state event", async () => {
+    let resolveSnapshot: ((status: RuntimeStatus) => void) | undefined;
+    let emitState: ((status: RuntimeStatus) => void) | undefined;
+    vi.mocked(getRuntimeStatus).mockImplementation(() => new Promise((resolve) => {
+      resolveSnapshot = resolve;
+    }));
+    vi.mocked(listenRuntimeState).mockImplementation(async (onState) => {
+      emitState = onState;
+      return () => undefined;
+    });
+    render(
+      <DownloadsProvider>
+        <RuntimeRunCard modelId="model" context={4096} />
+      </DownloadsProvider>,
+    );
+    await waitFor(() => expect(getRuntimeStatus).toHaveBeenCalled());
+
+    act(() => emitState?.({
+      state: { kind: "ready" },
+      port: 4242,
+      apiKeyVisible: true,
+    }));
+    await act(async () => {
+      resolveSnapshot?.({
+        state: { kind: "starting" },
+        port: 4242,
+        apiKeyVisible: false,
+      });
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("Running on this PC only")).toBeInTheDocument();
+  });
+
   it("unlistens event handlers that finish registering after unmount", async () => {
     let resolveState: ((unlisten: () => void) => void) | undefined;
     let resolveLogs: ((unlisten: () => void) => void) | undefined;
@@ -776,7 +878,7 @@ describe("RuntimeRunCard", () => {
   });
 
   it("keeps received logs while auto-scroll is paused and copies them", async () => {
-    let emitLog: ((line: string) => void) | undefined;
+    let emitLog: ((entry: RuntimeLogEntry) => void) | undefined;
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
@@ -802,13 +904,13 @@ describe("RuntimeRunCard", () => {
     fireEvent.click(pauseButton);
     expect(screen.getByRole("button", { name: "Resume auto-scroll" })).toBeInTheDocument();
     logPane.scrollTop = 0;
-    act(() => emitLog?.("received while paused"));
+    act(() => emitLog?.({ sequence: 1, line: "received while paused" }));
     expect(logPane).toHaveTextContent("received while paused");
     expect(logPane.scrollTop).toBe(0);
 
     fireEvent.click(screen.getByRole("button", { name: "Resume auto-scroll" }));
     expect(logPane.scrollTop).toBe(1000);
-    act(() => emitLog?.("received after resume"));
+    act(() => emitLog?.({ sequence: 2, line: "received after resume" }));
     expect(logPane).toHaveTextContent("received while paused");
     expect(logPane).toHaveTextContent("received after resume");
 
@@ -816,6 +918,45 @@ describe("RuntimeRunCard", () => {
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledWith("received while paused\nreceived after resume");
     });
+  });
+
+  it("reconciles live logs with a delayed snapshot without duplicates", async () => {
+    let resolveSnapshot: ((entries: RuntimeLogEntry[]) => void) | undefined;
+    let emitLog: ((entry: RuntimeLogEntry) => void) | undefined;
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    vi.mocked(getRuntimeLogs).mockImplementation(() => new Promise((resolve) => {
+      resolveSnapshot = resolve;
+    }));
+    vi.mocked(listenRuntimeLogs).mockImplementation(async (onLog) => {
+      emitLog = onLog;
+      return () => undefined;
+    });
+    const { container } = render(
+      <DownloadsProvider>
+        <RuntimeRunCard modelId="model" context={4096} />
+      </DownloadsProvider>,
+    );
+    await waitFor(() => expect(resolveSnapshot).toBeDefined());
+
+    act(() => emitLog?.({ sequence: 2, line: "second" }));
+    await act(async () => {
+      resolveSnapshot?.([
+        { sequence: 1, line: "first" },
+        { sequence: 2, line: "second" },
+      ]);
+      await Promise.resolve();
+    });
+    fireEvent.click(screen.getByText("Logs"));
+
+    const logPane = container.querySelector("pre");
+    if (!logPane) throw new Error("Runtime log pane was not rendered.");
+    expect(logPane.textContent).toBe("first\nsecond");
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("first\nsecond"));
   });
 
   it("renders a failed-state event with the serialized exit code", async () => {

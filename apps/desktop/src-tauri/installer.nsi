@@ -1137,22 +1137,22 @@ Section Uninstall
   !insertmacro CheckIfAppIsRunning "$INSTDIR\${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
   !insertmacro CheckIfAppIsRunning "$INSTDIR\aangan.exe" "Aangan CLI"
 
-  ${If} $DeleteAppDataCheckboxState = 1
-  ${AndIf} $UpdateMode <> 1
-    SetShellVarContext current
-    ExecWait '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\safe-delete-appdata.ps1" -RoamingDataPath "$APPDATA\${BUNDLEID}" -LocalDataPath "$LOCALAPPDATA\${BUNDLEID}" -AanganDataPath "$LOCALAPPDATA\${PRODUCTNAME}"' $R0
-    ${If} $R0 != 0
-      MessageBox MB_ICONEXCLAMATION "Aangan could not safely remove its application data (exit code $R0). The uninstall has been stopped."
-      Abort
-    ${EndIf}
-  ${EndIf}
-
   ${If} $UpdateMode <> 1
     ExecWait '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\cli-path.ps1" -Action Remove -InstallDir "$INSTDIR" -MarkerKey "${UNINSTKEY}"' $0
     ${If} $0 == 0
       SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
     ${Else}
       MessageBox MB_ICONEXCLAMATION "Aangan could not remove its CLI entry from your user PATH. Remove $\"$INSTDIR$\" manually if you no longer want the CLI command."
+    ${EndIf}
+  ${EndIf}
+
+  ${If} $DeleteAppDataCheckboxState = 1
+  ${AndIf} $UpdateMode <> 1
+    SetShellVarContext current
+    ExecWait '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\safe-delete-appdata.ps1" -RoamingDataPath "$APPDATA\${BUNDLEID}" -LocalDataPath "$LOCALAPPDATA\${BUNDLEID}" -AanganDataPath "$LOCALAPPDATA\${PRODUCTNAME}" -ExcludedPath "$EXEPATH"' $R0
+    ${If} $R0 != 0
+      MessageBox MB_ICONEXCLAMATION "Aangan could not safely remove its application data (exit code $R0). The uninstall has been stopped."
+      Abort
     ${EndIf}
   ${EndIf}
 

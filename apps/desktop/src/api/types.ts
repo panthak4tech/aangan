@@ -152,6 +152,11 @@ export interface RuntimeEndpoint {
   key: string;
 }
 
+export interface RuntimeLogEntry {
+  sequence: number;
+  line: string;
+}
+
 export interface GpuInfo {
   name: string;
   vendor: GpuVendor;

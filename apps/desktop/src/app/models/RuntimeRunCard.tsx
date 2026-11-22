@@ -11,10 +11,23 @@ import {
   startRuntime,
   stopRuntime,
 } from "@/api/api";
-import type { RuntimeEndpoint, RuntimeStatus } from "@/api/types";
+import type { RuntimeCatalog, RuntimeEndpoint, RuntimeLogEntry, RuntimeStatus } from "@/api/types";
 import { Button } from "@/components/primitives/button";
 import { Progress } from "@/components/ui/display";
 import { useDownloads } from "@/downloads/useDownloads";
+import { en } from "@/i18n/en";
+
+function mergeRuntimeLogs(
+  current: RuntimeLogEntry[],
+  incoming: RuntimeLogEntry[],
+): RuntimeLogEntry[] {
+  const entries = new Map<number, RuntimeLogEntry>();
+  for (const entry of current) entries.set(entry.sequence, entry);
+  for (const entry of incoming) entries.set(entry.sequence, entry);
+  return [...entries.values()]
+    .sort((left, right) => left.sequence - right.sequence)
+    .slice(-5000);
+}
 
 export function RuntimeRunCard({
   modelId,
@@ -31,12 +44,16 @@ export function RuntimeRunCard({
     apiKeyVisible: false,
   });
   const [endpoint, setEndpoint] = useState<RuntimeEndpoint | null>(null);
-  const [logs, setLogs] = useState<string[]>([]);
+  const [logs, setLogs] = useState<RuntimeLogEntry[]>([]);
   const logPaneRef = useRef<HTMLPreElement>(null);
+  const statusEventVersion = useRef(0);
   const [filter, setFilter] = useState("");
   const [paused, setPaused] = useState(false);
   const [ctx, setCtx] = useState(context);
-  const [runtimeInstalled, setRuntimeInstalled] = useState(false);
+  const [runtimeCatalog, setRuntimeCatalog] = useState<RuntimeCatalog | null>(null);
+  const [runtimeCatalogState, setRuntimeCatalogState] = useState<"loading" | "loaded" | "error">("loading");
+  const [runtimeCatalogError, setRuntimeCatalogError] = useState<string | null>(null);
+  const [runtimeCatalogReload, setRuntimeCatalogReload] = useState(0);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -55,21 +72,66 @@ export function RuntimeRunCard({
           }
         });
     };
-    void getRuntimeStatus().then((next) => active && setStatus(next));
-    void getRuntimeLogs().then((next) => active && setLogs(next));
-    void listRuntimes().then((catalog) => {
-      if (active) setRuntimeInstalled(catalog.runtimes.some((runtime) => runtime.installed.length > 0));
+    const stateRegistration = listenRuntimeState((next) => {
+        if (!active) return;
+        statusEventVersion.current += 1;
+        setStatus(next);
     });
-    void getRuntimeEndpoint().then((next) => active && setEndpoint(next));
-    registerListener(listenRuntimeState(setStatus));
-    registerListener(listenRuntimeLogs((line) => {
-      setLogs((current) => [...current.slice(-4999), line]);
-    }));
+    registerListener(stateRegistration);
+    const loadInitialStatus = () => {
+        if (!active) return;
+        const version = statusEventVersion.current;
+        void getRuntimeStatus()
+          .then((next) => {
+            if (active && statusEventVersion.current === version) setStatus(next);
+          })
+          .catch((reason: unknown) => {
+            if (active) setError(reason instanceof Error ? reason.message : String(reason));
+          });
+    };
+    void stateRegistration.then(loadInitialStatus, loadInitialStatus);
+
+    const logRegistration = listenRuntimeLogs((entry) => {
+        if (active) setLogs((current) => mergeRuntimeLogs(current, [entry]));
+    });
+    registerListener(logRegistration);
+    const loadInitialLogs = () => {
+        if (!active) return;
+        void getRuntimeLogs()
+          .then((snapshot) => {
+            if (active) setLogs((current) => mergeRuntimeLogs(current, snapshot));
+          })
+          .catch((reason: unknown) => {
+            if (active) setError(reason instanceof Error ? reason.message : String(reason));
+          });
+    };
+    void logRegistration.then(loadInitialLogs, loadInitialLogs);
     return () => {
       active = false;
       unlistenFunctions.forEach((unlisten) => unlisten());
     };
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    setRuntimeCatalogState("loading");
+    setRuntimeCatalogError(null);
+    void listRuntimes()
+        .then((catalog) => {
+          if (!active) return;
+          setRuntimeCatalog(catalog);
+          setRuntimeCatalogState("loaded");
+        })
+        .catch((reason: unknown) => {
+          if (!active) return;
+          setRuntimeCatalog(null);
+          setRuntimeCatalogError(reason instanceof Error ? reason.message : String(reason));
+          setRuntimeCatalogState("error");
+        });
+    return () => {
+        active = false;
+    };
+  }, [runtimeCatalogReload]);
 
   useEffect(() => {
     if (!paused && logPaneRef.current) {
@@ -86,18 +148,33 @@ export function RuntimeRunCard({
   }, [status.state.kind]);
 
   const filteredLogs = useMemo(
-    () => logs.filter((line) => line.toLowerCase().includes(filter.toLowerCase())),
+    () => logs
+      .map((entry) => entry.line)
+      .filter((line) => line.toLowerCase().includes(filter.toLowerCase())),
     [filter, logs],
   );
   const downloaded = download?.state.kind === "done";
-  const canStart = downloaded && runtimeInstalled;
+  const installedRuntimes = runtimeCatalog?.runtimes.flatMap((runtime) => runtime.installed) ?? [];
+  const runtimeInstalled = installedRuntimes.length > 0;
+  const defaultRuntime = runtimeCatalog?.defaultRuntime;
+  const hasDefaultRuntime = Boolean(defaultRuntime && installedRuntimes.some((runtime) =>
+    runtime.runtimeId === defaultRuntime.runtimeId
+      && runtime.version === defaultRuntime.version
+      && runtime.variant === defaultRuntime.variant
+  ));
+  const canStart = downloaded && hasDefaultRuntime;
   const stateKind = status.state.kind;
 
   const start = async () => {
     setWorking(true);
     setError(null);
+    const version = statusEventVersion.current;
     try {
-      setStatus(await startRuntime(modelId, ctx));
+      const next = await startRuntime(modelId, ctx);
+      if (statusEventVersion.current === version) {
+        statusEventVersion.current += 1;
+        setStatus(next);
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -108,8 +185,15 @@ export function RuntimeRunCard({
   const stop = async () => {
     setWorking(true);
     setError(null);
+    const version = statusEventVersion.current;
     try {
-      setStatus(await stopRuntime());
+      const next = await stopRuntime();
+      if (statusEventVersion.current === version) {
+        statusEventVersion.current += 1;
+        setStatus(next);
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       setWorking(false);
     }
@@ -140,8 +224,21 @@ export function RuntimeRunCard({
         )}
       </div>
 
-      {!runtimeInstalled && (
+      {runtimeCatalogState === "error" && (
+        <div className="flex items-center gap-2">
+          <p role="alert" className="text-sm text-destructive">
+            {en.views.models.runtimeCatalogLoadFailed(runtimeCatalogError ?? "")}
+          </p>
+          <Button size="sm" variant="outline" onClick={() => setRuntimeCatalogReload((value) => value + 1)}>
+            {en.views.models.retry}
+          </Button>
+        </div>
+      )}
+      {runtimeCatalogState === "loaded" && !runtimeInstalled && (
         <p className="text-sm text-muted-foreground">No runtime is installed. Open Runtimes in Settings to install one.</p>
+      )}
+      {runtimeCatalogState === "loaded" && runtimeInstalled && !hasDefaultRuntime && (
+        <p className="text-sm text-muted-foreground">{en.views.models.selectDefaultRuntime}</p>
       )}
       {!downloaded && (
         <p className="text-sm text-muted-foreground">Download this model before starting it.</p>
@@ -193,7 +290,7 @@ export function RuntimeRunCard({
             Start
           </Button>
         )}
-        {(stateKind === "starting" || stateKind === "ready") && (
+        {(stateKind === "starting" || stateKind === "ready" || stateKind === "stopping") && (
           <Button variant="outline" disabled={working} onClick={() => void stop()}>
             Stop
           </Button>

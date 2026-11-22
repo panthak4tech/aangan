@@ -173,6 +173,8 @@ export const en = {
       noSubscribedFamilies: "No model families are selected. Choose families in Settings.",
       catalogWarning: (warning: string) => `Catalog warning: ${warning}`,
       catalogUpdated: (date: string) => `Catalog generated ${date}`,
+      runtimeCatalogLoadFailed: (reason: string) => `Couldn't read installed runtimes: ${reason}`,
+      selectDefaultRuntime: "Select an installed default runtime in Settings > Runtimes before starting.",
       context: "Context length",
       contextHint: "How much text the model can keep in mind at once.",
       contextOption: (k: number) => `${k}K tokens`,

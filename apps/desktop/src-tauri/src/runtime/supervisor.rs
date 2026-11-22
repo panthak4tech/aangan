@@ -61,6 +61,13 @@ pub struct RuntimeEndpoint {
     pub key: String,
 }
 
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeLogEntry {
+    pub sequence: u64,
+    pub line: String,
+}
+
 struct RunningProcess {
     session_id: u64,
     child: Child,
@@ -73,6 +80,12 @@ struct RunningProcess {
 struct SupervisorState {
     state: RuntimeState,
     session_id: Option<u64>,
+}
+
+#[derive(Default)]
+struct LogBuffer {
+    next_sequence: u64,
+    entries: VecDeque<RuntimeLogEntry>,
 }
 
 impl SupervisorState {
@@ -114,7 +127,7 @@ struct SupervisorInner {
     lifecycle: Mutex<()>,
     next_session_id: AtomicU64,
     running: Mutex<Option<RunningProcess>>,
-    logs: Mutex<VecDeque<String>>,
+    logs: Mutex<LogBuffer>,
     port: Mutex<Option<u16>>,
     data_dir: PathBuf,
     app: AppHandle,
@@ -128,7 +141,10 @@ impl RuntimeSupervisor {
                 lifecycle: Mutex::new(()),
                 next_session_id: AtomicU64::new(1),
                 running: Mutex::new(None),
-                logs: Mutex::new(VecDeque::with_capacity(LOG_LIMIT)),
+                logs: Mutex::new(LogBuffer {
+                    entries: VecDeque::with_capacity(LOG_LIMIT),
+                    ..LogBuffer::default()
+                }),
                 port: Mutex::new(None),
                 data_dir,
                 app,
@@ -155,37 +171,26 @@ impl RuntimeSupervisor {
         }
     }
 
-    pub fn logs(&self) -> Vec<String> {
+    pub fn logs(&self) -> Vec<RuntimeLogEntry> {
         self.inner
             .logs
             .lock()
-            .map(|guard| guard.iter().cloned().collect())
+            .map(|guard| guard.entries.iter().cloned().collect())
             .unwrap_or_default()
     }
 
     pub fn clear_logs(&self) {
         if let Ok(mut logs) = self.inner.logs.lock() {
-            logs.clear();
+            logs.entries.clear();
         }
     }
 
     pub fn endpoint(&self) -> Option<RuntimeEndpoint> {
-        let is_ready = self
-            .inner
-            .state
-            .lock()
-            .ok()
-            .is_some_and(|guard| matches!(guard.state, RuntimeState::Ready));
-        if !is_ready {
-            return None;
-        }
-        let port = self.inner.port.lock().ok().and_then(|guard| *guard)?;
         let running = self.inner.running.lock().ok()?;
-        let key = running.as_ref()?.key.clone();
-        Some(RuntimeEndpoint {
-            base_url: format!("http://127.0.0.1:{port}/v1"),
-            key,
-        })
+        let process = running.as_ref()?;
+        let port = self.inner.port.lock().ok().and_then(|guard| *guard)?;
+        let state = self.inner.state.lock().ok()?;
+        endpoint_for_session(&state, process.session_id, &process.key, Some(port))
     }
 
     pub fn start(&self, model_id: &str, ctx: u32) -> Result<RuntimeStatus, String> {
@@ -238,7 +243,8 @@ impl RuntimeSupervisor {
             gpu_layers,
             threads: None,
         };
-        let key_mode = api_key_mode(&exe).unwrap_or(ApiKeyMode::Environment);
+        let key_mode = api_key_mode(&exe)
+            .map_err(|error| format!("could not check llama-server API-key support: {error}"))?;
         let mut command = Command::new(&exe);
         for arg in build_args(&params) {
             command.arg(arg);
@@ -349,7 +355,7 @@ impl RuntimeSupervisor {
     }
 
     pub fn stop(&self) -> Result<RuntimeStatus, String> {
-        let _lifecycle = self
+        let lifecycle = self
             .inner
             .lifecycle
             .lock()
@@ -359,34 +365,24 @@ impl RuntimeSupervisor {
             .running
             .lock()
             .map_err(|_| "Supervisor process state is unavailable.")?;
-        let process = running.take();
-        if let Some(process) = &process {
-            process.cancel_monitor.store(true, Ordering::Release);
-        }
-        push_state(&self.inner, RuntimeState::Stopping);
-        drop(running);
-
-        let Some(process) = process else {
+        let Some(process) = running.as_mut() else {
+            drop(lifecycle);
             if let Ok(mut port) = self.inner.port.lock() {
                 *port = None;
             }
             push_state(&self.inner, RuntimeState::Stopped);
             return Ok(self.state());
         };
-        let mut child = process.child;
-        let _ = child.kill();
-        #[cfg(windows)]
-        drop(process._job);
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            match child.try_wait() {
-                Ok(Some(_)) => break,
-                Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(50)),
-                Ok(None) => break,
-                Err(_) => break,
-            }
+        process.cancel_monitor.store(true, Ordering::Release);
+        push_state(&self.inner, RuntimeState::Stopping);
+        drop(lifecycle);
+
+        if let Err(error) = stop_child(&mut process.child, Duration::from_secs(5)) {
+            return Err(format!("Could not confirm llama-server stopped: {error}"));
         }
-        let _ = child.wait();
+
+        running.take();
+        drop(running);
         if let Ok(mut port) = self.inner.port.lock() {
             *port = None;
         }
@@ -402,7 +398,7 @@ impl RuntimeSupervisor {
             .rev()
             .take(200)
             .rev()
-            .cloned()
+            .map(|entry| entry.line.clone())
             .collect::<Vec<_>>()
             .join("\n");
         let state = serde_json::to_string(&status.state).unwrap_or_else(|_| "unknown".into());
@@ -463,6 +459,55 @@ fn push_state_for_session(
     true
 }
 
+fn endpoint_for_session(
+    state: &SupervisorState,
+    session_id: u64,
+    key: &str,
+    port: Option<u16>,
+) -> Option<RuntimeEndpoint> {
+    if state.session_id != Some(session_id) || !matches!(state.state, RuntimeState::Ready) {
+        return None;
+    }
+    let port = port?;
+    Some(RuntimeEndpoint {
+        base_url: format!("http://127.0.0.1:{port}/v1"),
+        key: key.to_string(),
+    })
+}
+
+fn stop_child(child: &mut Child, timeout: Duration) -> std::io::Result<()> {
+    if child.try_wait()?.is_some() {
+        return Ok(());
+    }
+    child.kill()?;
+    wait_for_child_exit(
+        timeout,
+        || child.try_wait().map(|status| status.is_some()),
+        thread::sleep,
+    )
+}
+
+fn wait_for_child_exit(
+    timeout: Duration,
+    mut try_wait: impl FnMut() -> std::io::Result<bool>,
+    mut sleep: impl FnMut(Duration),
+) -> std::io::Result<()> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if try_wait()? {
+            return Ok(());
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "timed out waiting for llama-server to exit",
+            ));
+        }
+        sleep(Duration::from_millis(50).min(remaining));
+    }
+}
+
 fn emit_state(inner: &SupervisorInner, state: RuntimeState) {
     let status = RuntimeStatus {
         api_key_visible: matches!(state, RuntimeState::Ready),
@@ -503,16 +548,27 @@ fn abort_spawned_child(child: &mut Child, context: &str, error: std::io::Error) 
 }
 
 fn push_log(inner: &SupervisorInner, line: &str) {
-    if let Ok(mut logs) = inner.logs.lock() {
-        append_log_line(&mut logs, line);
+    let entry = inner
+        .logs
+        .lock()
+        .ok()
+        .map(|mut logs| append_log_line(&mut logs, line));
+    if let Some(entry) = entry {
+        let _ = inner.app.emit("runtime://log", entry);
     }
 }
 
-fn append_log_line(logs: &mut VecDeque<String>, line: &str) {
-    if logs.len() == LOG_LIMIT {
-        logs.pop_front();
+fn append_log_line(logs: &mut LogBuffer, line: &str) -> RuntimeLogEntry {
+    let entry = RuntimeLogEntry {
+        sequence: logs.next_sequence,
+        line: line.to_string(),
+    };
+    logs.next_sequence = logs.next_sequence.saturating_add(1);
+    if logs.entries.len() == LOG_LIMIT {
+        logs.entries.pop_front();
     }
-    logs.push_back(line.to_string());
+    logs.entries.push_back(entry.clone());
+    entry
 }
 
 fn spawn_log_reader(
@@ -535,7 +591,6 @@ fn spawn_log_reader(
                     let trimmed = line.trim_end_matches(['\r', '\n']);
                     let safe = redact(trimmed, &secret);
                     push_log(&inner, &safe);
-                    let _ = inner.app.emit("runtime://log", safe);
                 }
                 Err(_) => break,
             }
@@ -701,7 +756,16 @@ fn recent_logs(inner: &SupervisorInner) -> Vec<String> {
     inner
         .logs
         .lock()
-        .map(|guard| guard.iter().rev().take(20).rev().cloned().collect())
+        .map(|guard| {
+            guard
+                .entries
+                .iter()
+                .rev()
+                .take(20)
+                .rev()
+                .map(|entry| entry.line.clone())
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -769,17 +833,54 @@ mod tests {
     use super::*;
 
     #[test]
+    fn endpoint_requires_ready_state_for_the_same_session() {
+        let mut state = SupervisorState::new();
+        state.start_session(1);
+        assert!(endpoint_for_session(&state, 1, "key", Some(4242)).is_none());
+
+        state.update_session(1, RuntimeState::Ready, false);
+        assert!(endpoint_for_session(&state, 2, "key", Some(4242)).is_none());
+        assert!(endpoint_for_session(&state, 1, "key", None).is_none());
+        let endpoint = endpoint_for_session(&state, 1, "key", Some(4242))
+            .expect("ready session has an endpoint");
+        assert_eq!(endpoint.base_url, "http://127.0.0.1:4242/v1");
+        assert_eq!(endpoint.key, "key");
+    }
+
+    #[test]
+    fn stop_wait_is_bounded() {
+        let timeout = wait_for_child_exit(Duration::from_millis(10), || Ok(false), |_| {})
+            .expect_err("a process that never exits must time out");
+        assert_eq!(timeout.kind(), std::io::ErrorKind::TimedOut);
+    }
+
+    #[test]
     fn ring_buffer_never_exceeds_5000_lines() {
-        let mut logs = VecDeque::new();
+        let mut logs = LogBuffer::default();
         for index in 0..LOG_LIMIT + 25 {
             append_log_line(&mut logs, &format!("line-{index}"));
         }
-        assert_eq!(logs.len(), LOG_LIMIT);
-        assert_eq!(logs.front().map(String::as_str), Some("line-25"));
+        assert_eq!(logs.entries.len(), LOG_LIMIT);
         assert_eq!(
-            logs.back().map(String::as_str),
+            logs.entries.front().map(|entry| entry.line.as_str()),
+            Some("line-25")
+        );
+        assert_eq!(
+            logs.entries.back().map(|entry| entry.line.as_str()),
             Some(format!("line-{}", LOG_LIMIT + 24).as_str())
         );
+    }
+
+    #[test]
+    fn log_sequences_are_unique_and_continue_after_clear() {
+        let mut logs = LogBuffer::default();
+        let first = append_log_line(&mut logs, "same");
+        let second = append_log_line(&mut logs, "same");
+        logs.entries.clear();
+        let third = append_log_line(&mut logs, "after clear");
+
+        assert!(first.sequence < second.sequence);
+        assert!(second.sequence < third.sequence);
     }
 
     #[test]
