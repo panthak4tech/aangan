@@ -579,6 +579,7 @@ mod tests {
             let mut request = [0u8; 256];
             let _ = stream.read(&mut request);
             let _ = stream.write_all(&vec![b'x'; 1025]);
+            thread::sleep(Duration::from_millis(20));
         });
 
         let error = loopback_status(port, "/health", Duration::from_secs(2))
