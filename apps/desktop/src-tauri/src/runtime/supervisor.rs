@@ -46,6 +46,13 @@ pub enum RuntimeState {
     },
 }
 
+fn start_is_blocked(state: &RuntimeState) -> bool {
+    matches!(
+        state,
+        RuntimeState::Starting | RuntimeState::Ready | RuntimeState::Stopping
+    )
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeStatus {
@@ -199,11 +206,8 @@ impl RuntimeSupervisor {
             .lifecycle
             .lock()
             .map_err(|_| "Supervisor lifecycle state is unavailable.")?;
-        if matches!(
-            self.state().state,
-            RuntimeState::Starting | RuntimeState::Ready
-        ) {
-            return Err("A runtime is already starting or running.".into());
+        if start_is_blocked(&self.state().state) {
+            return Err("A runtime is already starting, running, or stopping.".into());
         }
         if self
             .inner
@@ -831,6 +835,18 @@ fn gpu_layers_for_model(data_dir: &Path, model_id: &str, ctx: u32) -> Result<i32
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn start_is_blocked_until_the_previous_runtime_is_stopped() {
+        assert!(start_is_blocked(&RuntimeState::Starting));
+        assert!(start_is_blocked(&RuntimeState::Ready));
+        assert!(start_is_blocked(&RuntimeState::Stopping));
+        assert!(!start_is_blocked(&RuntimeState::Stopped));
+        assert!(!start_is_blocked(&RuntimeState::Failed {
+            exit_code: Some(1),
+            last_lines: vec![],
+        }));
+    }
 
     #[test]
     fn endpoint_requires_ready_state_for_the_same_session() {

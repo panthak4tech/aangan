@@ -47,6 +47,7 @@ export function RuntimeRunCard({
   const [logs, setLogs] = useState<RuntimeLogEntry[]>([]);
   const logPaneRef = useRef<HTMLPreElement>(null);
   const statusEventVersion = useRef(0);
+  const logClearVersion = useRef(0);
   const [filter, setFilter] = useState("");
   const [paused, setPaused] = useState(false);
   const [ctx, setCtx] = useState(context);
@@ -97,9 +98,12 @@ export function RuntimeRunCard({
     registerListener(logRegistration);
     const loadInitialLogs = () => {
         if (!active) return;
+        const clearVersion = logClearVersion.current;
         void getRuntimeLogs()
           .then((snapshot) => {
-            if (active) setLogs((current) => mergeRuntimeLogs(current, snapshot));
+            if (active && logClearVersion.current === clearVersion) {
+              setLogs((current) => mergeRuntimeLogs(current, snapshot));
+            }
           })
           .catch((reason: unknown) => {
             if (active) setError(reason instanceof Error ? reason.message : String(reason));
@@ -313,6 +317,7 @@ export function RuntimeRunCard({
             </Button>
             <Button size="sm" variant="outline" onClick={() => void copy(filteredLogs.join("\n"))}>Copy</Button>
             <Button size="sm" variant="outline" onClick={() => {
+              logClearVersion.current += 1;
               setLogs([]);
               void clearRuntimeLogs();
             }}>Clear</Button>

@@ -959,6 +959,31 @@ describe("RuntimeRunCard", () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("first\nsecond"));
   });
 
+  it("does not restore a delayed log snapshot after clearing logs", async () => {
+    let resolveSnapshot: ((entries: RuntimeLogEntry[]) => void) | undefined;
+    vi.mocked(getRuntimeLogs).mockImplementation(() => new Promise((resolve) => {
+      resolveSnapshot = resolve;
+    }));
+    render(
+      <DownloadsProvider>
+        <RuntimeRunCard modelId="model" context={4096} />
+      </DownloadsProvider>,
+    );
+    await waitFor(() => expect(resolveSnapshot).toBeDefined());
+
+    fireEvent.click(screen.getByText("Logs"));
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    await act(async () => {
+      resolveSnapshot?.([{ sequence: 1, line: "cleared log" }]);
+      await Promise.resolve();
+    });
+
+    const logPane = document.querySelector("pre");
+    if (!logPane) throw new Error("Runtime log pane was not rendered.");
+    expect(logPane).toBeEmptyDOMElement();
+    expect(clearRuntimeLogs).toHaveBeenCalledOnce();
+  });
+
   it("renders a failed-state event with the serialized exit code", async () => {
     let emitState: ((status: RuntimeStatus) => void) | undefined;
     vi.mocked(listenRuntimeState).mockImplementation(async (onState) => {

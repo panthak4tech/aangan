@@ -321,6 +321,15 @@ pub fn api_key_mode_from_help(help: &str) -> ApiKeyMode {
     }
 }
 
+fn api_key_mode_from_probe(success: bool, help: &str) -> io::Result<ApiKeyMode> {
+    if !success {
+        return Err(io::Error::other(
+            "API-key capability probe exited unsuccessfully",
+        ));
+    }
+    Ok(api_key_mode_from_help(help))
+}
+
 pub fn api_key_mode(exe: &Path) -> io::Result<ApiKeyMode> {
     let mut command = Command::new(exe);
     prepare_api_key_help_command(&mut command, env::vars_os().map(|(name, _)| name));
@@ -330,7 +339,7 @@ pub fn api_key_mode(exe: &Path) -> io::Result<ApiKeyMode> {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    Ok(api_key_mode_from_help(&help))
+    api_key_mode_from_probe(output.status.success(), &help)
 }
 
 #[cfg(windows)]
@@ -477,6 +486,29 @@ mod tests {
         );
         assert_eq!(
             api_key_mode_from_help("--api-key <KEY>"),
+            ApiKeyMode::Argument
+        );
+    }
+
+    #[test]
+    fn api_key_help_probe_rejects_unsuccessful_empty_output() {
+        let error = api_key_mode_from_probe(false, "")
+            .expect_err("failed capability probe must abort startup");
+        assert_eq!(
+            error.to_string(),
+            "API-key capability probe exited unsuccessfully"
+        );
+    }
+
+    #[test]
+    fn api_key_help_probe_uses_successful_output_for_key_mode() {
+        assert_eq!(
+            api_key_mode_from_probe(true, "LLAMA_API_KEY env var supported")
+                .expect("successful environment probe"),
+            ApiKeyMode::Environment
+        );
+        assert_eq!(
+            api_key_mode_from_probe(true, "--api-key <KEY>").expect("successful argument probe"),
             ApiKeyMode::Argument
         );
     }
