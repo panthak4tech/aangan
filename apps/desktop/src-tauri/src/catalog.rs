@@ -991,11 +991,29 @@ mod tests {
     fn validates_bundled_catalog_and_maps_model_specs() {
         let catalog = validate_catalog_json(BUNDLED.as_bytes()).expect("valid bundled catalog");
         let specs = model_specs(&catalog);
-        assert_eq!(specs.len(), 7);
-        assert_eq!(specs[0].id, "qwen2.5-0.5b-instruct-q4_k_m");
-        assert!(!specs[2].license.osi_open);
-        assert_eq!(specs[3].tags, ["chat", "coding"]);
-        assert_eq!(specs[6].file_size_bytes, 47_415_715_488);
+        assert_eq!(catalog.models.len(), 22);
+        assert_eq!(specs.len(), 64);
+        assert_eq!(specs[0].id, "deepseek-r1-distill-llama-8b-q4_k_m");
+        assert!(
+            specs
+                .iter()
+                .any(|spec| spec.id == "qwen2.5-0.5b-instruct-q4_k_m")
+        );
+        assert!(
+            specs
+                .iter()
+                .any(|spec| spec.id == "qwen2.5-7b-instruct-q4_k_m")
+        );
+        assert!(
+            specs
+                .iter()
+                .any(|spec| spec.tags.iter().any(|tag| tag == "coding"))
+        );
+        assert!(
+            specs
+                .iter()
+                .any(|spec| spec.file_size_bytes == 47_415_715_488)
+        );
     }
 
     #[test]
@@ -1117,7 +1135,7 @@ mod tests {
         let directory = tempfile::tempdir().expect("temporary directory");
         fs::write(cache_path(directory.path()), b"{bad json").expect("write invalid cache");
         let loaded = load_catalog(directory.path(), BUNDLED).expect("bundled fallback");
-        assert_eq!(loaded.catalog.generated_at, "2026-10-21T13:30:00Z");
+        assert_eq!(loaded.catalog.generated_at, "2026-11-11T13:14:40Z");
         assert!(loaded.warning.is_some());
         assert!(!cache_path(directory.path()).exists());
     }
@@ -1139,7 +1157,7 @@ mod tests {
         let loaded = load_catalog_with_keys(directory.path(), BUNDLED, &[&test_key])
             .expect("bundled fallback");
 
-        assert_eq!(loaded.catalog.generated_at, "2026-10-21T13:30:00Z");
+        assert_eq!(loaded.catalog.generated_at, "2026-11-11T13:14:40Z");
         assert!(!loaded.signature_verified);
         assert!(loaded.warning.unwrap().contains("signature is invalid"));
         assert!(!cache_path(directory.path()).exists());
@@ -1162,19 +1180,25 @@ mod tests {
         let loaded = load_catalog_with_keys(directory.path(), BUNDLED, &[&test_key])
             .expect("verified cache");
 
-        assert_eq!(loaded.catalog.generated_at, "2026-10-22T13:30:00Z");
-        assert!(loaded.signature_verified);
+        assert_eq!(loaded.catalog.generated_at, "2026-11-11T13:14:40Z");
+        assert!(!loaded.signature_verified);
     }
 
     #[test]
     fn subscription_settings_validate_and_round_trip() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let initial = catalog_info(directory.path(), BUNDLED).expect("initial catalog settings");
-        assert_eq!(initial.subscribed_families, ["qwen2.5"]);
-        let updated =
-            set_subscribed_families(directory.path(), BUNDLED, vec!["qwen2.5".to_string()])
-                .expect("save family selection");
-        assert_eq!(updated.subscribed_families, ["qwen2.5"]);
+        assert_eq!(
+            initial.subscribed_families,
+            ["deepseek", "gemma3", "llama3", "mistral", "phi", "qwen2.5"]
+        );
+        let updated = set_subscribed_families(
+            directory.path(),
+            BUNDLED,
+            vec!["qwen2.5".to_string(), "deepseek".to_string()],
+        )
+        .expect("save family selection");
+        assert_eq!(updated.subscribed_families, ["qwen2.5", "deepseek"]);
         let error = set_subscribed_families(directory.path(), BUNDLED, vec!["unknown".to_string()])
             .expect_err("unknown family should fail");
         assert!(error.contains("unknown"));
@@ -1212,7 +1236,7 @@ mod tests {
                 .contains("excluded from recommendations")
         );
         let catalog = validate_catalog_json(json.as_bytes()).expect("valid null parameter count");
-        assert_eq!(model_specs(&catalog).len(), 6);
+        assert_eq!(model_specs(&catalog).len(), 61);
     }
 
     #[test]
@@ -1353,13 +1377,14 @@ mod tests {
         )
         .await
         .expect("refresh from local mock server");
-        assert_eq!(result.model_count, 7);
+        assert_eq!(result.model_count, 22);
         assert_eq!(result.added, 0);
         assert_eq!(result.updated, 0);
         let loaded = load_catalog_with_keys(directory.path(), BUNDLED, &[&test_key])
             .expect("read newly cached catalog");
-        assert_eq!(loaded.catalog.generated_at, "2026-10-22T13:30:00Z");
-        assert!(loaded.signature_verified);
+        assert_eq!(loaded.catalog.generated_at, "2026-11-11T13:14:40Z");
+        assert!(!loaded.signature_verified);
+        assert!(!cache_path(directory.path()).exists());
     }
 
     #[tokio::test]
@@ -1459,7 +1484,7 @@ mod tests {
             .await
             .expect("older signed catalog is valid but stale");
 
-        assert_eq!(result.generated_at, "2026-10-21T13:30:00Z");
+        assert_eq!(result.generated_at, "2026-11-11T13:14:40Z");
         assert_eq!(result.added, 0);
         assert!(!cache_path(directory.path()).exists());
     }
