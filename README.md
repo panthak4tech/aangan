@@ -2,7 +2,7 @@
 
 Find out which open AI models your PC can run, and how fast, before choosing one to download.
 
-> Status: desktop app and CLI v0.5.0. Windows first. Offline by default: your
+> Status: desktop app and CLI v0.5.1. Windows first. Offline by default: your
 > hardware details never leave your PC. The optional **Refresh catalog** action
 > contacts `raw.githubusercontent.com` only with your permission.
 
