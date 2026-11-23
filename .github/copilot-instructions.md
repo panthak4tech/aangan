@@ -36,3 +36,12 @@ Run the relevant checks before declaring a task done:
 - JSON field names in `aangan-types` are a public snake_case contract; do not rename them casually.
 - Keep Clippy clean with `-D warnings`.
 - Do not add dependencies with GPL/AGPL licenses.
+
+## Networking and processes (v0.5.0+)
+- All outbound network access goes through `aangan_net::NetGate`. Never create a reqwest client elsewhere (clippy.toml enforces it). New hosts require an entry in `crates/aangan-net/src/allow.rs`, a test, and a line in `docs/NETWORK.md`.
+- Downloads are resumable, size-capped and SHA-256 verified against the signed catalog/manifests. Never trust a hash from the same response.
+- Never extract archives without `extract_zip_safely`. Never run an executable that was not installed from the signed runtimes manifest.
+- Runtimes bind to `127.0.0.1` on a random port with a per-session key, run inside the kill-on-close Job Object, and never receive `LLAMA_*`/`HF_*`/proxy environment variables.
+- Never write outside the data folder or the user-chosen model folder; canonicalize and prefix-check before deleting.
+- Never log or display the runtime API key.
+- Never commit, push, open PRs or merge without explicit approval.

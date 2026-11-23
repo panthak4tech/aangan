@@ -1,3 +1,5 @@
+#![allow(clippy::disallowed_types)]
+
 use crate::allow::{is_allowed, Purpose};
 use serde::Serialize;
 use std::{

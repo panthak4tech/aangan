@@ -122,11 +122,20 @@ ManifestDPIAwareness PerMonitorV2
               System::Call '*$R9(&w256 .r7)'
               ${If} $7 == "${productName}"
                 ExecWait '"$SYSDIR\taskkill.exe" /PID $4 /F' $R8
-                nsis_tauri_utils::FindProcessCurrentUser "$4"
-                Pop $R8
-                ${If} $R8 != 0
-                  Goto app_check_abort_${UniqueID}
-                ${EndIf}
+                StrCpy $R7 20
+                verify_process_exit_${UniqueID}:
+                  nsis_tauri_utils::FindProcessCurrentUser "$4"
+                  Pop $R8
+                  ${If} $R8 = 0
+                    Goto process_exit_verified_${UniqueID}
+                  ${EndIf}
+                  IntOp $R7 $R7 - 1
+                  ${If} $R7 <= 0
+                    Goto app_check_abort_${UniqueID}
+                  ${EndIf}
+                  Sleep 250
+                  Goto verify_process_exit_${UniqueID}
+                process_exit_verified_${UniqueID}:
               ${EndIf}
               IntOp $R6 $R6 + 1
               ${If} $R6 < $2
@@ -1137,6 +1146,16 @@ Section Uninstall
     ${EndIf}
   ${EndIf}
 
+  ${If} $DeleteAppDataCheckboxState = 1
+  ${AndIf} $UpdateMode <> 1
+    SetShellVarContext current
+    ExecWait '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\safe-delete-appdata.ps1" -RoamingDataPath "$APPDATA\${BUNDLEID}" -LocalDataPath "$LOCALAPPDATA\${BUNDLEID}" -AanganDataPath "$LOCALAPPDATA\${PRODUCTNAME}" -ExcludedPath "$EXEPATH"' $R0
+    ${If} $R0 != 0
+      MessageBox MB_ICONEXCLAMATION "Aangan could not safely remove its application data (exit code $R0). The uninstall has been stopped."
+      Abort
+    ${EndIf}
+  ${EndIf}
+
   ; Delete the app directory and its content from disk
   ; Copy main executable
   Delete /REBOOTOK "$INSTDIR\${MAINBINARYNAME}.exe"
@@ -1235,9 +1254,6 @@ Section Uninstall
     DeleteRegKey /ifempty HKCU "${MANUPRODUCTKEY}"
     DeleteRegKey /ifempty HKCU "${MANUKEY}"
 
-    SetShellVarContext current
-    RmDir /r "$APPDATA\${BUNDLEID}"
-    RmDir /r "$LOCALAPPDATA\${BUNDLEID}"
   ${EndIf}
 
   !ifmacrodef NSIS_HOOK_POSTUNINSTALL

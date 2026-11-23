@@ -19,6 +19,7 @@ import { FitBadge } from "./FitBadge";
 import { availableFor } from "./fit";
 import { describePlacement, describeReason } from "./placement";
 import { DownloadActions } from "@/downloads/DownloadActions";
+import { RuntimeRunCard } from "./RuntimeRunCard";
 
 export function ModelDetailDialog({
   rec,
@@ -136,6 +137,8 @@ export function ModelDetailDialog({
                     </ul>
                   </section>
                 )}
+
+                <RuntimeRunCard modelId={model.id} context={estimate.context} />
 
                 <DialogFooter className="gap-2">
                   {estimate.fit === "wont_fit" ? (

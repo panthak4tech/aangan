@@ -10,6 +10,11 @@ installer targets the current user and does not require administrator access.
 The installer bundles the `aangan` CLI and offers an unchecked option to add
 the install directory to the current user's PATH. That PATH entry is removed
 on uninstall only if the installer added it.
+The uninstaller's "Delete application data" option removes Aangan's managed
+`%LOCALAPPDATA%\Aangan` directory and Tauri's identifier-based data directories.
+A model folder selected outside that directory is not removed. Cleanup removes
+junctions and symbolic links without traversing their targets; if safe cleanup
+fails, the uninstaller stops instead of continuing.
 The custom NSIS template ignores unrelated processes reported by Windows
 Restart Manager. If shutdown fails with error 350 while Aangan is listed, it
 terminates only Aangan's reported process IDs, verifies they have exited, and

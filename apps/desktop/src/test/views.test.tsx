@@ -4,7 +4,9 @@ import packageMetadata from "../../package.json";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cancelDownload,
+  clearRuntimeLogs,
   copyHardwareReport,
+  copyRuntimeDiagnostics,
   clearNetworkActivity,
   chooseModelFolder,
   deleteStorageFile,
@@ -13,10 +15,16 @@ import {
   getModelFolder,
   getNetworkActivity,
   getNetworkState,
+  getRuntimeEndpoint,
+  getRuntimeLogs,
+  getRuntimeStatus,
   getStorageInfo,
   listenNetworkState,
   listenDownloadProgress,
+  listenRuntimeLogs,
+  listenRuntimeState,
   listDownloads,
+  listRuntimes,
   openModelFileFolder,
   openModelFolder,
   pauseDownload,
@@ -33,8 +41,16 @@ import {
   setModelFolder,
   setSubscribedFamilies,
   startDownload,
+  startRuntime,
+  stopRuntime,
 } from "@/api/api";
-import type { DownloadProgress, HardwareProfile, StorageInfo } from "@/api/types";
+import type {
+  DownloadProgress,
+  HardwareProfile,
+  RuntimeLogEntry,
+  RuntimeStatus,
+  StorageInfo,
+} from "@/api/types";
 import { MODELS, PRESETS } from "@/api/presets";
 import { rankModels } from "@/api/estimate";
 import { en } from "@/i18n/en";
@@ -42,6 +58,7 @@ import { ModelsView } from "@/app/views/ModelsView";
 import { ScanView } from "@/app/views/ScanView";
 import { SettingsView } from "@/app/views/SettingsView";
 import { DownloadsButton, DownloadsDrawer } from "@/app/downloads/DownloadsDrawer";
+import { RuntimeRunCard } from "@/app/models/RuntimeRunCard";
 import { FirstRunWizard } from "@/app/wizard/FirstRunWizard";
 import { TooltipProvider } from "@/components/primitives/tooltip";
 import { ToastProvider } from "@/components/ui/toast-provider";
@@ -57,7 +74,9 @@ vi.mock("@/api/api", async () => {
   const { default: metadata } = await import("../../package.json");
   return {
     cancelDownload: vi.fn(),
+    clearRuntimeLogs: vi.fn(),
     copyHardwareReport: vi.fn(),
+    copyRuntimeDiagnostics: vi.fn(),
     clearNetworkActivity: vi.fn(),
     chooseModelFolder: vi.fn(),
     deleteStorageFile: vi.fn(),
@@ -66,10 +85,16 @@ vi.mock("@/api/api", async () => {
     getModelFolder: vi.fn(),
     getNetworkActivity: vi.fn(),
     getNetworkState: vi.fn(),
+    getRuntimeEndpoint: vi.fn(),
+    getRuntimeLogs: vi.fn(),
+    getRuntimeStatus: vi.fn(),
     getStorageInfo: vi.fn(),
     listenNetworkState: vi.fn(),
     listenDownloadProgress: vi.fn(),
+    listenRuntimeLogs: vi.fn(),
+    listenRuntimeState: vi.fn(),
     listDownloads: vi.fn(),
+    listRuntimes: vi.fn(),
     openModelFileFolder: vi.fn(),
     openModelFolder: vi.fn(),
     pauseDownload: vi.fn(),
@@ -86,6 +111,8 @@ vi.mock("@/api/api", async () => {
     setModelFolder: vi.fn(),
     setSubscribedFamilies: vi.fn(),
     startDownload: vi.fn(),
+    startRuntime: vi.fn(),
+    stopRuntime: vi.fn(),
     APP_INFO: {
       version: metadata.version,
       license: "MIT",
@@ -159,6 +186,28 @@ beforeEach(() => {
     etaSecs: null,
   }));
   vi.mocked(getModelFolder).mockResolvedValue("C:\\models");
+  const stoppedRuntime: RuntimeStatus = {
+    state: { kind: "stopped" },
+    port: null,
+    apiKeyVisible: false,
+  };
+  vi.mocked(getRuntimeEndpoint).mockResolvedValue(null);
+  vi.mocked(getRuntimeLogs).mockResolvedValue([]);
+  vi.mocked(getRuntimeStatus).mockResolvedValue(stoppedRuntime);
+  vi.mocked(listRuntimes).mockResolvedValue({
+    generatedAt: "2026-10-21T13:30:00Z",
+    signatureVerified: false,
+    warning: null,
+    updateStatus: null,
+    defaultRuntime: null,
+    runtimes: [],
+  });
+  vi.mocked(listenRuntimeLogs).mockResolvedValue(vi.fn());
+  vi.mocked(listenRuntimeState).mockResolvedValue(vi.fn());
+  vi.mocked(startRuntime).mockResolvedValue(stoppedRuntime);
+  vi.mocked(stopRuntime).mockResolvedValue(stoppedRuntime);
+  vi.mocked(clearRuntimeLogs).mockResolvedValue();
+  vi.mocked(copyRuntimeDiagnostics).mockResolvedValue("");
   vi.mocked(listDownloads).mockResolvedValue([]);
   vi.mocked(listenDownloadProgress).mockResolvedValue(vi.fn());
   vi.mocked(chooseModelFolder).mockResolvedValue(null);
@@ -682,6 +731,284 @@ describe("ModelsView", () => {
   });
 });
 
+describe("RuntimeRunCard", () => {
+  it("shows a retryable error when the runtime catalog cannot be loaded", async () => {
+    vi.mocked(listRuntimes).mockRejectedValueOnce(new Error("catalog unavailable"));
+    render(
+      <DownloadsProvider>
+        <RuntimeRunCard modelId="model" context={4096} />
+      </DownloadsProvider>,
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      en.views.models.runtimeCatalogLoadFailed("catalog unavailable"),
+    );
+    expect(screen.queryByText(/No runtime is installed/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: en.views.models.retry }));
+
+    expect(await screen.findByText(/No runtime is installed/)).toBeInTheDocument();
+  });
+
+  it("requires the selected default runtime to be installed before enabling Start", async () => {
+    vi.mocked(listDownloads).mockResolvedValue([{
+      id: "model",
+      state: { kind: "done" },
+      done: 1024,
+      total: 1024,
+      bytesPerSec: 0,
+      etaSecs: null,
+    }]);
+    vi.mocked(listRuntimes).mockResolvedValueOnce({
+      generatedAt: "2026-10-21T13:30:00Z",
+      signatureVerified: false,
+      warning: null,
+      updateStatus: null,
+      defaultRuntime: null,
+      runtimes: [{
+        id: "llama.cpp",
+        displayName: "llama.cpp",
+        version: "1",
+        license: "MIT",
+        homepage: "",
+        recommendedVariant: null,
+        recommendationReason: "",
+        variants: [],
+        installed: [{
+          runtimeId: "llama.cpp",
+          version: "1",
+          variant: "cpu",
+          path: "runtime",
+          sizeBytes: 1,
+          isDefault: false,
+        }],
+      }],
+    });
+    render(
+      <DownloadsProvider>
+        <RuntimeRunCard modelId="model" context={4096} />
+      </DownloadsProvider>,
+    );
+
+    expect(await screen.findByText(en.views.models.selectDefaultRuntime)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start" })).toBeDisabled();
+  });
+
+  it("does not let a delayed status snapshot replace a newer state event", async () => {
+    let resolveSnapshot: ((status: RuntimeStatus) => void) | undefined;
+    let emitState: ((status: RuntimeStatus) => void) | undefined;
+    vi.mocked(getRuntimeStatus).mockImplementation(() => new Promise((resolve) => {
+      resolveSnapshot = resolve;
+    }));
+    vi.mocked(listenRuntimeState).mockImplementation(async (onState) => {
+      emitState = onState;
+      return () => undefined;
+    });
+    render(
+      <DownloadsProvider>
+        <RuntimeRunCard modelId="model" context={4096} />
+      </DownloadsProvider>,
+    );
+    await waitFor(() => expect(getRuntimeStatus).toHaveBeenCalled());
+
+    act(() => emitState?.({
+      state: { kind: "ready" },
+      port: 4242,
+      apiKeyVisible: true,
+    }));
+    await act(async () => {
+      resolveSnapshot?.({
+        state: { kind: "starting" },
+        port: 4242,
+        apiKeyVisible: false,
+      });
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("Running on this PC only")).toBeInTheDocument();
+  });
+
+  it("unlistens event handlers that finish registering after unmount", async () => {
+    let resolveState: ((unlisten: () => void) => void) | undefined;
+    let resolveLogs: ((unlisten: () => void) => void) | undefined;
+    vi.mocked(listenRuntimeState).mockImplementation(() => new Promise((resolve) => {
+      resolveState = resolve;
+    }));
+    vi.mocked(listenRuntimeLogs).mockImplementation(() => new Promise((resolve) => {
+      resolveLogs = resolve;
+    }));
+
+    const { unmount } = render(
+      <DownloadsProvider>
+        <RuntimeRunCard modelId="model" context={4096} />
+      </DownloadsProvider>,
+    );
+    await waitFor(() => {
+      expect(resolveState).toBeDefined();
+      expect(resolveLogs).toBeDefined();
+    });
+
+    const unlistenState = vi.fn();
+    const unlistenLogs = vi.fn();
+    await act(async () => {
+      unmount();
+      resolveState?.(unlistenState);
+      resolveLogs?.(unlistenLogs);
+      await Promise.resolve();
+    });
+
+    expect(unlistenState).toHaveBeenCalledOnce();
+    expect(unlistenLogs).toHaveBeenCalledOnce();
+  });
+
+  it("cleans up a successful listener when the other registration fails", async () => {
+    const unlistenState = vi.fn();
+    vi.mocked(listenRuntimeState).mockResolvedValue(unlistenState);
+    vi.mocked(listenRuntimeLogs).mockRejectedValue(new Error("log listener unavailable"));
+
+    const { unmount } = render(
+      <DownloadsProvider>
+        <RuntimeRunCard modelId="model" context={4096} />
+      </DownloadsProvider>,
+    );
+
+    expect(await screen.findByText("log listener unavailable")).toBeInTheDocument();
+    unmount();
+    expect(unlistenState).toHaveBeenCalledOnce();
+  });
+
+  it("keeps received logs while auto-scroll is paused and copies them", async () => {
+    let emitLog: ((entry: RuntimeLogEntry) => void) | undefined;
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    vi.mocked(listenRuntimeLogs).mockImplementation(async (onLog) => {
+      emitLog = onLog;
+      return () => undefined;
+    });
+    const { container } = render(
+      <DownloadsProvider>
+        <RuntimeRunCard modelId="model" context={4096} />
+      </DownloadsProvider>,
+    );
+
+    fireEvent.click(screen.getByText("Logs"));
+    const pauseButton = await screen.findByRole("button", { name: "Pause auto-scroll" });
+    await waitFor(() => expect(emitLog).toBeDefined());
+    const logPane = container.querySelector("pre");
+    if (!logPane) throw new Error("Runtime log pane was not rendered.");
+    Object.defineProperty(logPane, "scrollHeight", { configurable: true, value: 1000 });
+
+    fireEvent.click(pauseButton);
+    expect(screen.getByRole("button", { name: "Resume auto-scroll" })).toBeInTheDocument();
+    logPane.scrollTop = 0;
+    act(() => emitLog?.({ sequence: 1, line: "received while paused" }));
+    expect(logPane).toHaveTextContent("received while paused");
+    expect(logPane.scrollTop).toBe(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Resume auto-scroll" }));
+    expect(logPane.scrollTop).toBe(1000);
+    act(() => emitLog?.({ sequence: 2, line: "received after resume" }));
+    expect(logPane).toHaveTextContent("received while paused");
+    expect(logPane).toHaveTextContent("received after resume");
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith("received while paused\nreceived after resume");
+    });
+  });
+
+  it("reconciles live logs with a delayed snapshot without duplicates", async () => {
+    let resolveSnapshot: ((entries: RuntimeLogEntry[]) => void) | undefined;
+    let emitLog: ((entry: RuntimeLogEntry) => void) | undefined;
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    vi.mocked(getRuntimeLogs).mockImplementation(() => new Promise((resolve) => {
+      resolveSnapshot = resolve;
+    }));
+    vi.mocked(listenRuntimeLogs).mockImplementation(async (onLog) => {
+      emitLog = onLog;
+      return () => undefined;
+    });
+    const { container } = render(
+      <DownloadsProvider>
+        <RuntimeRunCard modelId="model" context={4096} />
+      </DownloadsProvider>,
+    );
+    await waitFor(() => expect(resolveSnapshot).toBeDefined());
+
+    act(() => emitLog?.({ sequence: 2, line: "second" }));
+    await act(async () => {
+      resolveSnapshot?.([
+        { sequence: 1, line: "first" },
+        { sequence: 2, line: "second" },
+      ]);
+      await Promise.resolve();
+    });
+    fireEvent.click(screen.getByText("Logs"));
+
+    const logPane = container.querySelector("pre");
+    if (!logPane) throw new Error("Runtime log pane was not rendered.");
+    expect(logPane.textContent).toBe("first\nsecond");
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("first\nsecond"));
+  });
+
+  it("does not restore a delayed log snapshot after clearing logs", async () => {
+    let resolveSnapshot: ((entries: RuntimeLogEntry[]) => void) | undefined;
+    vi.mocked(getRuntimeLogs).mockImplementation(() => new Promise((resolve) => {
+      resolveSnapshot = resolve;
+    }));
+    render(
+      <DownloadsProvider>
+        <RuntimeRunCard modelId="model" context={4096} />
+      </DownloadsProvider>,
+    );
+    await waitFor(() => expect(resolveSnapshot).toBeDefined());
+
+    fireEvent.click(screen.getByText("Logs"));
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    await act(async () => {
+      resolveSnapshot?.([{ sequence: 1, line: "cleared log" }]);
+      await Promise.resolve();
+    });
+
+    const logPane = document.querySelector("pre");
+    if (!logPane) throw new Error("Runtime log pane was not rendered.");
+    expect(logPane).toBeEmptyDOMElement();
+    expect(clearRuntimeLogs).toHaveBeenCalledOnce();
+  });
+
+  it("renders a failed-state event with the serialized exit code", async () => {
+    let emitState: ((status: RuntimeStatus) => void) | undefined;
+    vi.mocked(listenRuntimeState).mockImplementation(async (onState) => {
+      emitState = onState;
+      return () => undefined;
+    });
+    render(
+      <DownloadsProvider>
+        <RuntimeRunCard modelId="model" context={4096} />
+      </DownloadsProvider>,
+    );
+    await waitFor(() => expect(emitState).toBeDefined());
+
+    act(() => {
+      emitState?.({
+        state: { kind: "failed", exitCode: 23, lastLines: ["server exited"] },
+        port: null,
+        apiKeyVisible: false,
+      });
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("llama-server failed (exit code 23).");
+  });
+});
+
 describe("ScanView", () => {
   it("shows the empty state without a profile and the scanning state while probing", () => {
     const onRescan = vi.fn();
@@ -817,6 +1144,7 @@ describe("DownloadsDrawer", () => {
       </DownloadsProvider>,
     );
 
+    expect(screen.getByRole("dialog").className).toContain("content-start");
     expect(await screen.findByText(en.views.downloads.savedTo("C:\\models"))).toBeInTheDocument();
     expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "50");
     fireEvent.click(screen.getByRole("button", { name: en.views.downloads.openFolder }));

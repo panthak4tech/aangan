@@ -19,6 +19,8 @@ use tauri::Emitter;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
+pub mod supervisor;
+
 use crate::catalog::signature::{CATALOG_PUBLIC_KEYS, verify_catalog};
 
 const RUNTIME_MANIFEST_URL: &str =
@@ -102,16 +104,16 @@ async fn ensure_directory_component(
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-struct RuntimeSettings {
-    default_runtime: Option<InstalledRuntimeKey>,
+pub(crate) struct RuntimeSettings {
+    pub(crate) default_runtime: Option<InstalledRuntimeKey>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct InstalledRuntimeKey {
-    runtime_id: String,
-    version: String,
-    variant: String,
+    pub(crate) runtime_id: String,
+    pub(crate) version: String,
+    pub(crate) variant: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1048,7 +1050,7 @@ async fn fetch_limited(
     Ok(bytes)
 }
 
-fn load_settings(data_dir: &Path) -> Result<RuntimeSettings, String> {
+pub(crate) fn load_settings(data_dir: &Path) -> Result<RuntimeSettings, String> {
     match fs::read(data_dir.join(RUNTIME_SETTINGS_FILE)) {
         Ok(bytes) => serde_json::from_slice(&bytes)
             .map_err(|error| format!("runtime settings are invalid: {error}")),
@@ -1069,7 +1071,7 @@ fn save_settings(data_dir: &Path, settings: &RuntimeSettings) -> Result<(), Stri
     )
 }
 
-fn installed_runtimes(
+pub(crate) fn installed_runtimes(
     data_dir: &Path,
     default_runtime: Option<&InstalledRuntimeKey>,
 ) -> Result<Vec<InstalledRuntime>, String> {
